@@ -29,6 +29,14 @@ export const PLAYER_STATUS_DEFS = [
   export const MONSTER_SLOT_MACHINE_IDLE_REFRESH = 0.4;
   export const prayerBindingLookup = new Map();
 
+  export function randomMonsterAbility(){
+    if(!MONSTER_ABILITY_IDS.length){
+      return 'green';
+    }
+    const index = Math.floor(Math.random() * MONSTER_ABILITY_IDS.length);
+    return MONSTER_ABILITY_IDS[Math.max(0, Math.min(MONSTER_ABILITY_IDS.length - 1, index))];
+  }
+
   export function formatAbilityKeyLabel(key, code){
     if(typeof key === 'string' && key.length){
       if(key === ' ') return 'Space';

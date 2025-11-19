@@ -16,7 +16,9 @@ import {
   MONSTER_SLOT_MACHINE_SPIN_REFRESH,
   MONSTER_SLOT_MACHINE_IDLE_REFRESH,
   prayerBindingLookup,
+  randomMonsterAbility,
   formatAbilityKeyLabel,
+  buildDefaultPlayerStatusConfig,
   buildDefaultPrayerBindings,
   rebuildPrayerBindingLookup,
   ensurePrayerState,
@@ -5991,14 +5993,6 @@ import { createEventBus } from './core/events.js';
     const top = Math.max(28, Math.min(height - 12, topBase));
     monsterHud.style.left = `${left}px`;
     monsterHud.style.top = `${top}px`;
-  }
-
-  function randomMonsterAbility(){
-    if(!MONSTER_ABILITY_IDS.length){
-      return 'green';
-    }
-    const index = Math.floor(Math.random() * MONSTER_ABILITY_IDS.length);
-    return MONSTER_ABILITY_IDS[Math.max(0, Math.min(MONSTER_ABILITY_IDS.length - 1, index))];
   }
 
   function setMonsterSlotFaces(monster, abilityId){
