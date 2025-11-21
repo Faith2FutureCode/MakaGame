@@ -1724,6 +1724,24 @@
           <div class="colliderList" id="visionList" role="listbox" aria-label="Vision shapes"></div>
         </div>
 
+
+
+        <button class="btn" data-settings-genre="core" id="btnPerf" data-icon="dY4" title="Performance metrics">
+          Performance <span class="hint">FPS & load</span>
+        </button>
+        <div class="submenu" id="perfPane">
+          <div class="subhint">Live snapshot of simulation and rendering load.</div>
+          <div class="formrow"><label>FPS</label><div class="rangeWrap"><span class="rangeValue" id="perfFpsValue">--</span></div></div>
+          <div class="formrow"><label>Frame time</label><div class="rangeWrap"><span class="rangeValue" id="perfFrameValue">-- ms</span></div></div>
+          <div class="formrow"><label>Minions</label><div class="rangeWrap"><span class="rangeValue" id="perfMinionsValue">--</span></div></div>
+          <div class="formrow"><label>Projectiles</label><div class="rangeWrap"><span class="rangeValue" id="perfProjectilesValue">--</span></div></div>
+          <div class="formrow"><label>Colliders</label><div class="rangeWrap"><span class="rangeValue" id="perfCollidersValue">--</span></div></div>
+          <div class="formrow"><label>Vision sources</label><div class="rangeWrap"><span class="rangeValue" id="perfVisionValue">--</span></div></div>
+          <div class="formrow"><label>Last spike</label><div class="rangeWrap"><span class="rangeValue" id="perfSpikeValue">--</span></div></div>
+          <div class="formrow"><label>Share</label><div class="rangeWrap"><button class="formButton" id="perfCopyLog" type="button">Copy log</button></div></div>
+          <div class="formrow"><label></label><div class="rangeWrap"><button class="formButton" id="perfDownloadLog" type="button">Download log</button></div></div>
+        </div>
+
         <!-- Minions -->
         <button class="btn" data-settings-genre="moba" id="btnMinions" data-icon="ðŸ‘¾" title="Minions">
           Minions <span class="hint">Create spawnsâ€¦</span>

@@ -30,7 +30,17 @@ import {
 } from './core/state.js';
 import { createEngine } from './core/engine.js';
 import { initSettingsPanel } from './ui/settingsPanel.js';
+import { createSettingHelp } from './ui/settingHelp.js';
+import { createSettingsSearch } from './ui/settingsSearch.js';
+import { clamp, clamp01, smoothstep01, clampFloat, sanitizeHexColor, degToRad, radToDeg } from './utils/math.js';
+import { createCollisionHelpers } from './systems/collisionSystem.js';
+import { createCombatSystem } from './systems/combatSystem.js';
+import { createSpawnSystem } from './systems/spawnSystem.js';
+import { createPhysicsSystem } from './systems/physicsSystem.js';
+import { createAbilitySystem } from './systems/abilitySystem.js';
+import { buildCoarseBlocks, buildNavGrid } from './utils/grid.js';
 import { createEventBus } from './core/events.js';
+import { initMobaSettingsMenu } from './genres/moba/settings.js';
 /* MakaMoba Ã¢â‚¬â€ Sidebar + Portal endpoints + non-overlap + Scoring (overlay) */
 
   // Elements
@@ -4648,9 +4658,37 @@ import { createEventBus } from './core/events.js';
   const cameraLockBindBtn = document.getElementById('cameraLockBind');
   const cameraRecenterBtn = document.getElementById('cameraRecenterBtn');
 
+  const btnPerf = document.getElementById('btnPerf');
+  const perfPane = document.getElementById('perfPane');
+  const perfFpsValue = document.getElementById('perfFpsValue');
+  const perfFrameValue = document.getElementById('perfFrameValue');
+  const perfMinionsValue = document.getElementById('perfMinionsValue');
+  const perfProjectilesValue = document.getElementById('perfProjectilesValue');
+  const perfCollidersValue = document.getElementById('perfCollidersValue');
+  const perfVisionValue = document.getElementById('perfVisionValue');
+  const perfSpikeValue = document.getElementById('perfSpikeValue');
+  const perfCopyLogBtn = document.getElementById('perfCopyLog');
+  const perfDownloadLogBtn = document.getElementById('perfDownloadLog');
+
+  const NAV_COARSE_CELL = 128;
+
   const settingHelpEl = document.getElementById('settingHelp');
   const settingHelpTitle = document.getElementById('settingHelpTitle');
   const settingHelpBody = document.getElementById('settingHelpBody');
+  const settingHelpApi = createSettingHelp({
+    settingHelpEl,
+    settingHelpTitle,
+    settingHelpBody,
+    sidebarEl
+  });
+  const {
+    showSettingHelp,
+    hideSettingHelp,
+    deriveSettingHelp,
+    initializeSettingHelp,
+    setActiveSettingHelpSource,
+    getActiveSettingHelpSource
+  } = settingHelpApi;
 
   const btnCursor = document.getElementById('btnCursor');
   const cursorPane = document.getElementById('cursorPane');
@@ -5024,10 +5062,10 @@ import { createEventBus } from './core/events.js';
       hideSettingHelp('hud-message');
       return;
     }
-    activeSettingHelpSource = 'hud-message';
+    setActiveSettingHelpSource('hud-message');
     showSettingHelp('Status', message);
     hudMessageState.timer = setTimeout(()=>{
-      if(activeSettingHelpSource === 'hud-message'){
+      if(getActiveSettingHelpSource() === 'hud-message'){
         hideSettingHelp('hud-message');
       }
       hudMessageState.timer = null;
@@ -6752,338 +6790,212 @@ import { createEventBus } from './core/events.js';
     rite_arcane: { type: 'aoe', radiusKey: 'aoeRadiusPx', distanceKey: 'maxRangePx', showRangeRing: true }
   };
 
-  Object.values(abilityDefinitions).forEach(ability => {
-    if(!ability) return;
-    ability.castType = normalizeAbilityCastType(ability, ability.castType);
+  const abilitySystem = createAbilitySystem({
+    abilityDefinitions,
+    abilityTunables,
+    SPELL_SCALE_MIN,
+    SPELL_SCALE_MAX,
+    renderAbilityBar,
+    isAbilityRepoOpen,
+    updateAbilityRepoSubtitle,
+    renderSpellList,
+    spellSpeedScaleInput,
+    spellSizeScaleInput,
+    abilityAllowedCastTypes,
+    defaultAbilityCastType,
+    normalizeCastType
   });
+  const {
+    listAbilities,
+    getAbilityDefinition,
+    abilityField,
+    isSpellSpeedField,
+    isSpellSizeField,
+    abilityFieldValue,
+    clampFieldValue,
+    abilitySummary,
+    clampSpellScale,
+    refreshAbilitiesForSpellScaling,
+    setSpellSpeedScale,
+    setSpellSizeScale,
+    normalizeAbilityCastType
+  } = abilitySystem;
 
-  function listAbilities(){ return Object.values(abilityDefinitions); }
-  function getAbilityDefinition(id){ return abilityDefinitions[id] || null; }
-  function abilityField(ability, key){
-    if(!ability || !Array.isArray(ability.fields)) return null;
-    return ability.fields.find(field => field.key === key) || null;
+  const perfState = {
+    lastSample: (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()),
+    frameSum: 0,
+    frameCount: 0,
+    lastFps: 0,
+    lastFrameMs: 0,
+    updateSum: 0,
+    renderSum: 0,
+    updateMax: 0,
+    renderMax: 0,
+    circleSum: 0,
+    pathfindCalls: 0,
+    pathfindNodes: 0,
+    minimapRenders: 0,
+    intervalMax: 0,
+    lastFrameStart: null,
+    lastSpike: null,
+    history: []
+  };
+
+  const perfCounters = {
+    circleChecks: 0,
+    pathfindCalls: 0,
+    pathfindNodesVisited: 0,
+    minimapRenders: 0
+  };
+
+  const PATHFIND_BUDGET_PER_FRAME = 3;
+  let pathfindBudget = PATHFIND_BUDGET_PER_FRAME;
+
+  function perfNow(){
+    return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   }
-  function isSpellSpeedField(field){
-    if(!field) return false;
-    if(field.scale === 'speed') return true;
-    if(field.scale === 'size') return false;
-    const key = String(field.key || '');
-    if(/speed/i.test(key)) return true;
-    const unit = String(field.unit || '');
-    if(/px\s*\/\s*s/i.test(unit)) return true;
-    return false;
+
+  function perfProjectileCount(){
+    let total = 0;
+    if(Array.isArray(projectiles)) total += projectiles.length;
+    if(Array.isArray(piercingArrowProjectiles)) total += piercingArrowProjectiles.length;
+    if(Array.isArray(plasmaFissionProjectiles)) total += plasmaFissionProjectiles.length;
+    if(Array.isArray(chargingGaleProjectiles)) total += chargingGaleProjectiles.length;
+    if(Array.isArray(cullingBarrageProjectiles)) total += cullingBarrageProjectiles.length;
+    if(Array.isArray(laserProjectiles)) total += laserProjectiles.length;
+    if(Array.isArray(blinkingBoltProjectiles)) total += blinkingBoltProjectiles.length;
+    return total;
   }
-  function isSpellSizeField(field){
-    if(!field) return false;
-    if(field.scale === 'size') return true;
-    if(field.scale === 'speed') return false;
-    const key = String(field.key || '');
-    if(/(width|length|distance|range|radius|diameter|size|height)/i.test(key)) return true;
-    const unit = String(field.unit || '');
-    if(/px/i.test(unit) && !/px\s*\/\s*s/i.test(unit)) return true;
-    return false;
+
+  function buildPerfLog(){
+    const fps = perfState.lastFps ? perfState.lastFps.toFixed(2) : 'n/a';
+    const frameMs = perfState.lastFrameMs ? perfState.lastFrameMs.toFixed(2) : 'n/a';
+    const updateAvg = perfState.frameCount ? (perfState.updateSum / Math.max(1, perfState.frameCount)).toFixed(2) : (perfState.lastFrameMs ? perfState.lastFrameMs.toFixed(2) : 'n/a');
+    const renderAvg = perfState.frameCount ? (perfState.renderSum / Math.max(1, perfState.frameCount)).toFixed(2) : 'n/a';
+    const updateMax = perfState.updateMax ? perfState.updateMax.toFixed(2) : 'n/a';
+    const renderMax = perfState.renderMax ? perfState.renderMax.toFixed(2) : 'n/a';
+    const circleRate = perfState.frameCount ? Math.round(perfState.circleSum / Math.max(1, perfState.frameCount)) : perfCounters.circleChecks;
+    const pathfindRate = perfState.frameCount ? Math.round(perfState.pathfindCalls / Math.max(1, perfState.frameCount)) : perfCounters.pathfindCalls;
+    const pathfindNodes = perfState.frameCount ? Math.round(perfState.pathfindNodes / Math.max(1, perfState.frameCount)) : perfCounters.pathfindNodesVisited;
+    const minimapRate = perfState.frameCount ? Math.round(perfState.minimapRenders / Math.max(1, perfState.frameCount)) : perfCounters.minimapRenders;
+    const snapTime = new Date().toISOString();
+    const mapSize = `${Math.round(mapState.width)}x${Math.round(mapState.height)}`;
+    const cameraSize = `${Math.round(camera.width)}x${Math.round(camera.height)} @${(camera.scale || 1).toFixed(2)}`;
+    const projCount = perfProjectileCount();
+    const spike = perfState.lastSpike;
+    const lines = [
+      `MakaGame perf snapshot @ ${snapTime}`,
+      `FPS=${fps}`,
+      `FrameTimeMs=${frameMs} (update avg ${updateAvg}ms, render avg ${renderAvg}ms, update max ${updateMax}ms, render max ${renderMax}ms)`,
+      `Map=${mapSize}`,
+      `Camera=${cameraSize}`,
+      `Minions=${minions.length || 0}`,
+      `Projectiles=${projCount}`,
+      `Colliders=${customColliders.length || 0}`,
+      `VisionSources=${(customVisionSources && customVisionSources.length) || 0}`,
+      `PendingSpawns=${pendingSpawns.length || 0}`,
+      `CollisionChecksPerFrame=${circleRate}`,
+      `PathfindsPerFrame=${pathfindRate}`,
+      `PathfindNodesPerFrame=${pathfindNodes}`,
+      `MinimapRendersPerFrame=${minimapRate}`,
+      spike ? `LastSpike=frame ${spike.frameMs.toFixed(2)}ms (update ${spike.updateMs.toFixed(2)}ms, render ${spike.renderMs.toFixed(2)}ms, gap ${spike.interval.toFixed(2)}ms, coll ${spike.circleChecks}, path ${spike.pathfindCalls}, nodes ${spike.pathfindNodes}) @ ${spike.timestamp}` : ''
+    ];
+    return lines.filter(Boolean).join('\\n');
   }
-  function abilityFieldValue(ability, key, options = {}){
-    const field = abilityField(ability, key);
-    if(!field) return undefined;
-    let value = field.value;
-    if(!options || !options.skipScaling){
-      if(isSpellSpeedField(field)){
-        value = value * abilityTunables.spellSpeedScale;
-      } else if(isSpellSizeField(field)){
-        value = value * abilityTunables.spellSizeScale;
-      }
+
+  function updatePerfPanel(){
+    if(perfFpsValue){
+      perfFpsValue.textContent = perfState.lastFps ? perfState.lastFps.toFixed(1) : '--';
     }
-    return value;
-  }
-  function clampFieldValue(field, raw){
-    if(!field) return 0;
-    let value = parseFloat(raw);
-    if(!Number.isFinite(value)) value = field.min;
-    value = Math.max(field.min, Math.min(field.max, value));
-    const step = Number(field.step || 1);
-    if(step > 0){
-      value = Math.round(value / step) * step;
-      const decimals = step >= 1 ? 0 : (String(step).split('.')[1] || '').length;
-      if(decimals > 0) value = Number(value.toFixed(decimals));
-      value = Math.max(field.min, Math.min(field.max, value));
+    if(perfFrameValue){
+      perfFrameValue.textContent = perfState.lastFrameMs ? `${perfState.lastFrameMs.toFixed(1)} ms` : '-- ms';
     }
-    return value;
-  }
-  function abilitySummary(ability){
-    if(!ability) return '';
-    const damage = abilityFieldValue(ability, 'damage');
-    const baseDamage = abilityFieldValue(ability, 'baseDamage');
-    const damageScalePct = abilityFieldValue(ability, 'damageScalePct');
-    const slow = abilityFieldValue(ability, 'slowPct');
-    const slowDuration = abilityFieldValue(ability, 'slowDurationMs');
-    const length = abilityFieldValue(ability, 'beamLength');
-    const coneDistance = abilityFieldValue(ability, 'laserDistance');
-    const grabRange = abilityFieldValue(ability, 'grabRange');
-    const blinkDistance = abilityFieldValue(ability, 'blinkDistance');
-    const width = abilityFieldValue(ability, 'beamWidth');
-    const coneWidth = abilityFieldValue(ability, 'laserWidth');
-    const grabCenterWidth = abilityFieldValue(ability, 'grabWidthCenter');
-    const grabEdgeWidth = abilityFieldValue(ability, 'grabWidthEdge');
-    const projectileWidth = abilityFieldValue(ability, 'laserProjectileWidth');
-    const speed = abilityFieldValue(ability, 'laserSpeed');
-    const grabSpeed = abilityFieldValue(ability, 'grabSpeed');
-    const count = abilityFieldValue(ability, 'laserCount');
-    const barrageChannel = abilityFieldValue(ability, 'channelDurationMs');
-    const barrageInterval = abilityFieldValue(ability, 'shotIntervalMs');
-    const barrageRange = abilityFieldValue(ability, 'projectileRangePx');
-    const barrageWidth = abilityFieldValue(ability, 'projectileWidthPx');
-    const barrageSpeed = abilityFieldValue(ability, 'projectileSpeedPxS');
-    const barrageDamage = abilityFieldValue(ability, 'damagePerShot');
-    const plasmaDamageFlat = abilityFieldValue(ability, 'damage_flat');
-    const plasmaRange = abilityFieldValue(ability, 'projectile_range_px');
-    const plasmaWidth = abilityFieldValue(ability, 'projectile_width_px');
-    const plasmaSpeed = abilityFieldValue(ability, 'projectile_speed_px_per_ms');
-    const plasmaSlowPct = abilityFieldValue(ability, 'slow_percent');
-    const plasmaSlowDuration = abilityFieldValue(ability, 'slow_duration_ms');
-    const plasmaSplitAngle = abilityFieldValue(ability, 'split_angle_deg');
-    const plasmaRecastWindow = abilityFieldValue(ability, 'recast_window_ms');
-    const plasmaSplitTriggerRaw = abilityFieldValue(ability, 'split_trigger', { skipScaling: true });
-    const chargeMinMs = abilityFieldValue(ability, 'chargeMinMs');
-    const chargeMaxMs = abilityFieldValue(ability, 'chargeMaxMs');
-    const chargeRangeMin = abilityFieldValue(ability, 'rangeMinPx');
-    const chargeRangeMax = abilityFieldValue(ability, 'rangeMaxPx');
-    const chargeDamageMin = abilityFieldValue(ability, 'damageMin');
-    const chargeDamageMax = abilityFieldValue(ability, 'damageMax');
-    const chargeWidth = abilityFieldValue(ability, 'widthPx');
-    const chargeProjectileSpeed = abilityFieldValue(ability, 'projectileSpeedPxPerMs');
-    const chargeMoveSlow = abilityFieldValue(ability, 'movementSlowPct');
-    const cooldown = abilityFieldValue(ability, 'cooldownMs');
-    const castTime = abilityFieldValue(ability, 'castTimeMs');
-    const stunDuration = abilityFieldValue(ability, 'stunDurationMs');
-    const pullDistance = abilityFieldValue(ability, 'pullDistance');
-    const postHitLockout = abilityFieldValue(ability, 'postHitLockoutMs');
-    const impactDamage = abilityFieldValue(ability, 'impactDamage');
-    const fissureDamage = abilityFieldValue(ability, 'fissureDamage');
-    const impactRadius = abilityFieldValue(ability, 'impactRadius');
-    const fissureLength = abilityFieldValue(ability, 'fissureLength');
-    const fissureWidth = abilityFieldValue(ability, 'fissureWidth');
-    const fissureSpeed = abilityFieldValue(ability, 'fissureSpeed');
-    const iceFieldDuration = abilityFieldValue(ability, 'iceFieldDurationMs');
-    const iceFieldSlowPct = abilityFieldValue(ability, 'iceFieldSlowPct');
-    const parts = [];
-    if(Number.isFinite(damage)) parts.push(`Damage ${damage}`);
-    if(Number.isFinite(chargeDamageMin) || Number.isFinite(chargeDamageMax)){
-      const minDmg = Number.isFinite(chargeDamageMin) ? Math.round(chargeDamageMin) : null;
-      const maxDmg = Number.isFinite(chargeDamageMax) ? Math.round(chargeDamageMax) : null;
-      if(minDmg !== null && maxDmg !== null){
-        if(minDmg === maxDmg){
-          parts.push(`Damage ${minDmg}`);
-        } else {
-          parts.push(`Damage ${minDmg}-${maxDmg}`);
-        }
-      } else if(minDmg !== null){
-        parts.push(`Damage ${minDmg}`);
-      } else if(maxDmg !== null){
-        parts.push(`Damage up to ${maxDmg}`);
-      }
+    if(perfMinionsValue){
+      perfMinionsValue.textContent = String(minions.length || 0);
     }
-    if(Number.isFinite(baseDamage)) parts.push(`Base ${baseDamage}`);
-    const impactDamageFinite = Number.isFinite(impactDamage) ? Number(impactDamage) : null;
-    const fissureDamageFinite = Number.isFinite(fissureDamage) ? Number(fissureDamage) : null;
-    if(impactDamageFinite !== null || fissureDamageFinite !== null){
-      if(impactDamageFinite !== null && fissureDamageFinite !== null && impactDamageFinite === fissureDamageFinite){
-        parts.push(`Impact/Fissure ${impactDamageFinite}`);
+    if(perfProjectilesValue){
+      perfProjectilesValue.textContent = String(perfProjectileCount());
+    }
+    if(perfCollidersValue){
+      perfCollidersValue.textContent = String(customColliders.length || 0);
+    }
+    if(perfVisionValue){
+      perfVisionValue.textContent = String((customVisionSources && customVisionSources.length) || 0);
+    }
+    if(perfSpikeValue){
+      if(perfState.lastSpike){
+        const spike = perfState.lastSpike;
+        perfSpikeValue.textContent = `${spike.frameMs.toFixed(2)}ms (upd ${spike.updateMs.toFixed(2)} / rnd ${spike.renderMs.toFixed(2)} / gap ${spike.interval.toFixed(2)} / coll ${spike.circleChecks} / path ${spike.pathfindCalls})`;
       } else {
-        if(impactDamageFinite !== null) parts.push(`Impact ${impactDamageFinite}`);
-        if(fissureDamageFinite !== null) parts.push(`Fissure ${fissureDamageFinite}`);
+        perfSpikeValue.textContent = '--';
       }
-    }
-    if(Number.isFinite(damageScalePct) && damageScalePct !== 0) parts.push(`+${damageScalePct}% AD`);
-    if(Number.isFinite(slow)){
-      if(Number.isFinite(slowDuration) && slowDuration > 0){
-        parts.push(`Slow ${slow}%/${slowDuration}ms`);
-      } else {
-        parts.push(`Slow ${slow}%`);
-      }
-    }
-    if(Number.isFinite(iceFieldSlowPct)) parts.push(`Field slow ${iceFieldSlowPct}%`);
-    if(Number.isFinite(plasmaDamageFlat)) parts.push(`Damage ${Math.round(plasmaDamageFlat)}`);
-    if(Number.isFinite(plasmaSlowPct)){
-      if(Number.isFinite(plasmaSlowDuration) && plasmaSlowDuration > 0){
-        parts.push(`Slow ${Math.round(plasmaSlowPct)}%/${Math.round(plasmaSlowDuration)}ms`);
-      } else {
-        parts.push(`Slow ${Math.round(plasmaSlowPct)}%`);
-      }
-    }
-    const rangeValue = Number.isFinite(length)
-      ? length
-      : (Number.isFinite(coneDistance)
-        ? coneDistance
-        : (Number.isFinite(grabRange)
-          ? grabRange
-          : (Number.isFinite(plasmaRange) ? plasmaRange : null)));
-    if(Number.isFinite(rangeValue)) parts.push(`${rangeValue}px range`);
-    if(Number.isFinite(chargeRangeMin) || Number.isFinite(chargeRangeMax)){
-      const minRange = Number.isFinite(chargeRangeMin) ? Math.round(chargeRangeMin) : null;
-      const maxRange = Number.isFinite(chargeRangeMax) ? Math.round(chargeRangeMax) : null;
-      if(minRange !== null && maxRange !== null){
-        if(minRange === maxRange){
-          parts.push(`${minRange}px range`);
-        } else {
-          parts.push(`Range ${minRange}-${maxRange}px`);
-        }
-      } else if(maxRange !== null){
-        parts.push(`Range up to ${maxRange}px`);
-      } else if(minRange !== null){
-        parts.push(`${minRange}px range`);
-      }
-    }
-    if(Number.isFinite(impactRadius)) parts.push(`${impactRadius}px impact radius`);
-    if(Number.isFinite(fissureLength)) parts.push(`${fissureLength}px fissure`);
-    if(Number.isFinite(fissureWidth)) parts.push(`${fissureWidth}px fissure width`);
-    if(Number.isFinite(fissureSpeed)) parts.push(`${fissureSpeed}px/s fissure`);
-    if(Number.isFinite(iceFieldDuration)){
-      const seconds = Math.max(0, Number(iceFieldDuration) || 0) / 1000;
-      const formatted = seconds >= 10 ? Math.round(seconds).toString() : seconds.toFixed(1);
-      parts.push(`${formatted}s ice field`);
-    }
-    const widthValue = Number.isFinite(width)
-      ? width
-      : (Number.isFinite(coneWidth)
-        ? coneWidth
-        : (Number.isFinite(grabCenterWidth)
-          ? grabCenterWidth
-          : (Number.isFinite(plasmaWidth) ? plasmaWidth : null)));
-    if(Number.isFinite(widthValue)) parts.push(`${widthValue}px width`);
-    if(Number.isFinite(chargeWidth) && chargeWidth !== widthValue) parts.push(`${Math.round(chargeWidth)}px width`);
-    if(Number.isFinite(grabEdgeWidth) && grabEdgeWidth !== widthValue) parts.push(`${grabEdgeWidth}px edge width`);
-    if(Number.isFinite(projectileWidth)) parts.push(`${projectileWidth}px laser width`);
-    if(Number.isFinite(speed)) parts.push(`${speed}px/s`);
-    if(Number.isFinite(plasmaSpeed)) parts.push(`${Math.round(plasmaSpeed)}px/s`);
-    if(Number.isFinite(chargeProjectileSpeed)){
-      parts.push(`${Math.round(chargeProjectileSpeed)}px/s`);
-    }
-    if(Number.isFinite(grabSpeed) && grabSpeed !== speed) parts.push(`${grabSpeed}px/s hand`);
-    if(Number.isFinite(count)) parts.push(`Lasers ${count}`);
-    if(Number.isFinite(blinkDistance)) parts.push(`${blinkDistance}px blink`);
-    if(Number.isFinite(barrageRange)) parts.push(`${Math.round(barrageRange)}px range`);
-    if(Number.isFinite(barrageWidth)) parts.push(`${Math.round(barrageWidth)}px width`);
-    if(Number.isFinite(barrageSpeed)) parts.push(`${Math.round(barrageSpeed)}px/s`);
-    if(Number.isFinite(barrageDamage)) parts.push(`${Math.round(barrageDamage)} dmg/shot`);
-    if(Number.isFinite(plasmaSplitAngle) && plasmaSplitAngle > 0){
-      parts.push(`Split Â±${Math.round(plasmaSplitAngle)}Â°`);
-    }
-    if(Number.isFinite(plasmaRecastWindow) && plasmaRecastWindow > 0){
-      parts.push(`Recast ${formatSeconds(plasmaRecastWindow)} window`);
-    }
-    if(Number.isFinite(plasmaSplitTriggerRaw)){
-      const labels = ['Split on recast', 'Split on hit', 'Split at max range'];
-      const idx = Math.max(0, Math.min(labels.length - 1, Math.round(plasmaSplitTriggerRaw)));
-      parts.push(labels[idx]);
-    }
-    if(Number.isFinite(barrageChannel) && barrageChannel > 0){
-      const channelSeconds = barrageChannel / 1000;
-      const formatted = channelSeconds >= 10 ? Math.round(channelSeconds).toString() : channelSeconds.toFixed(1);
-      parts.push(`${formatted}s channel`);
-    }
-    if(Number.isFinite(barrageInterval) && barrageInterval > 0){
-      const shotsPerSec = Math.round((1000 / barrageInterval) * 10) / 10;
-      const totalShots = Number.isFinite(barrageChannel) && barrageChannel > 0
-        ? Math.max(1, Math.floor(barrageChannel / barrageInterval))
-        : null;
-      parts.push(`${shotsPerSec} shots/s`);
-      if(Number.isFinite(totalShots)) parts.push(`${totalShots} shots`);
-    }
-    if(Number.isFinite(stunDuration) && stunDuration > 0) parts.push(`Stun ${stunDuration}ms`);
-    if(Number.isFinite(pullDistance) && pullDistance > 0) parts.push(`Pull ${pullDistance}px`);
-    if(Number.isFinite(castTime) && castTime > 0) parts.push(`${castTime}ms cast`);
-    if(Number.isFinite(chargeMinMs) || Number.isFinite(chargeMaxMs)){
-      const minChargeSec = Number.isFinite(chargeMinMs) ? (chargeMinMs / 1000) : null;
-      const maxChargeSec = Number.isFinite(chargeMaxMs) ? (chargeMaxMs / 1000) : null;
-      const formatSeconds = (seconds)=>{
-        if(seconds === null) return '';
-        return seconds >= 10 ? Math.round(seconds).toString() : seconds.toFixed(seconds >= 1 ? 1 : 2);
-      };
-      if(minChargeSec !== null && maxChargeSec !== null){
-        if(Math.abs(minChargeSec - maxChargeSec) < 0.0001){
-          parts.push(`Charge ${formatSeconds(maxChargeSec)}s`);
-        } else {
-          parts.push(`Charge ${formatSeconds(minChargeSec)}-${formatSeconds(maxChargeSec)}s`);
-        }
-      } else if(maxChargeSec !== null){
-        parts.push(`Charge up to ${formatSeconds(maxChargeSec)}s`);
-      } else if(minChargeSec !== null){
-        parts.push(`Charge ${formatSeconds(minChargeSec)}s`);
-      }
-    }
-    if(Number.isFinite(cooldown)) parts.push(`${cooldown}ms CD`);
-    if(Number.isFinite(chargeMoveSlow) && chargeMoveSlow > 0) parts.push(`${chargeMoveSlow}% slow while charging`);
-    if(Number.isFinite(postHitLockout) && postHitLockout > 0) parts.push(`${postHitLockout}ms recovery`);
-    const trapCount = abilityFieldValue(ability, 'dropCount');
-    if(Number.isFinite(trapCount) && trapCount > 0) parts.push(`${trapCount} traps`);
-    const trapArmDelay = abilityFieldValue(ability, 'armDelayMs');
-    if(Number.isFinite(trapArmDelay) && trapArmDelay > 0) parts.push(`Arm ${trapArmDelay}ms`);
-    const trapLifetime = abilityFieldValue(ability, 'lifetimeMs');
-    if(Number.isFinite(trapLifetime) && trapLifetime > 0) parts.push(`Lifetime ${trapLifetime}ms`);
-    const trapTrigger = abilityFieldValue(ability, 'triggerRadiusPx');
-    if(Number.isFinite(trapTrigger) && trapTrigger > 0) parts.push(`Trigger r${trapTrigger}px`);
-    const trapAoe = abilityFieldValue(ability, 'aoeRadiusPx');
-    if(Number.isFinite(trapAoe) && trapAoe > 0) parts.push(`AoE r${trapAoe}px`);
-    const trapRoot = abilityFieldValue(ability, 'immobilizeMs');
-    if(Number.isFinite(trapRoot) && trapRoot > 0) parts.push(`Root ${trapRoot}ms`);
-    const trapMaxActive = abilityFieldValue(ability, 'maxActiveTraps');
-    if(Number.isFinite(trapMaxActive) && trapMaxActive > 0) parts.push(`Max ${trapMaxActive}`);
-    const placementModeRaw = abilityFieldValue(ability, 'placementMode', { skipScaling: true });
-    if(Number.isFinite(placementModeRaw)){
-      const modes = ['Inline drop', 'Cluster drop', 'Free drop'];
-      const idx = Math.max(0, Math.min(modes.length - 1, Math.round(placementModeRaw)));
-      const label = modes[idx];
-      if(label) parts.push(label);
-    }
-    const modeCharges = abilityFieldValue(ability, 'modeCharges');
-    const modeDuration = abilityFieldValue(ability, 'modeDurationMs');
-    const explosionDelay = abilityFieldValue(ability, 'explosionDelayMs');
-    const explosionRadius = abilityFieldValue(ability, 'aoeRadiusPx');
-    const artilleryMinRange = abilityFieldValue(ability, 'minRangePx');
-    const artilleryMaxRange = abilityFieldValue(ability, 'maxRangePx');
-    if(Number.isFinite(modeCharges) && modeCharges > 0) parts.push(`${modeCharges} charges`);
-    if(Number.isFinite(modeDuration) && modeDuration > 0) parts.push(`Mode ${Math.round(modeDuration)}ms`);
-    if(Number.isFinite(explosionDelay) && explosionDelay > 0) parts.push(`Delay ${Math.round(explosionDelay)}ms`);
-    if(Number.isFinite(explosionRadius) && explosionRadius > 0) parts.push(`AoE r${Math.round(explosionRadius)}px`);
-    if(Number.isFinite(artilleryMaxRange) && artilleryMaxRange > 0){
-      if(Number.isFinite(artilleryMinRange) && artilleryMinRange > 0){
-        parts.push(`Range ${Math.round(artilleryMinRange)}-${Math.round(artilleryMaxRange)}px`);
-      } else {
-        parts.push(`Range ${Math.round(artilleryMaxRange)}px`);
-      }
-    }
-    return parts.join(' â€¢ ');
-  }
-  function clampSpellScale(value){
-    let numeric = parseFloat(value);
-    if(!Number.isFinite(numeric)) numeric = 1;
-    numeric = Math.max(SPELL_SCALE_MIN, Math.min(SPELL_SCALE_MAX, numeric));
-    return Math.round(numeric * 100) / 100;
-  }
-  function refreshAbilitiesForSpellScaling(){
-    renderAbilityBar();
-    if(isAbilityRepoOpen()){
-      updateAbilityRepoSubtitle();
-      renderSpellList();
     }
   }
-  function setSpellSpeedScale(value, { syncInput = true } = {}){
-    const next = clampSpellScale(value);
-    abilityTunables.spellSpeedScale = next;
-    if(syncInput && spellSpeedScaleInput){
-      spellSpeedScaleInput.value = String(next);
+
+  function recordPerfFrame(frameMs, updateMs, renderMs, frameStartTime){
+    const now = perfNow();
+    perfCounters.circleChecks = perfCounters.circleChecks || 0;
+    perfCounters.pathfindCalls = perfCounters.pathfindCalls || 0;
+    perfCounters.pathfindNodesVisited = perfCounters.pathfindNodesVisited || 0;
+    perfCounters.minimapRenders = perfCounters.minimapRenders || 0;
+    const interval = perfState.lastFrameStart === null ? 0 : Math.max(0, frameStartTime - perfState.lastFrameStart);
+    perfState.lastFrameStart = frameStartTime;
+    if(interval > perfState.intervalMax){
+      perfState.intervalMax = interval;
     }
-    refreshAbilitiesForSpellScaling();
-  }
-  function setSpellSizeScale(value, { syncInput = true } = {}){
-    const next = clampSpellScale(value);
-    abilityTunables.spellSizeScale = next;
-    if(syncInput && spellSizeScaleInput){
-      spellSizeScaleInput.value = String(next);
+    const spikeCandidate = {
+      frameMs,
+      updateMs,
+      renderMs,
+      interval,
+      circleChecks: perfCounters.circleChecks,
+      pathfindCalls: perfCounters.pathfindCalls,
+      pathfindNodes: perfCounters.pathfindNodesVisited,
+      timestamp: new Date().toISOString()
+    };
+    if(!perfState.lastSpike || spikeCandidate.frameMs > perfState.lastSpike.frameMs || spikeCandidate.interval > perfState.lastSpike.interval){
+      perfState.lastSpike = spikeCandidate;
     }
-    refreshAbilitiesForSpellScaling();
+    perfState.frameCount += 1;
+    perfState.frameSum += frameMs;
+    perfState.updateSum += updateMs;
+    perfState.renderSum += renderMs;
+    if(updateMs > perfState.updateMax) perfState.updateMax = updateMs;
+    if(renderMs > perfState.renderMax) perfState.renderMax = renderMs;
+    perfState.circleSum += perfCounters.circleChecks;
+    perfState.pathfindCalls += perfCounters.pathfindCalls;
+    perfState.pathfindNodes += perfCounters.pathfindNodesVisited;
+    perfState.minimapRenders += perfCounters.minimapRenders;
+    if(now - perfState.lastSample >= 1000){
+      const elapsed = now - perfState.lastSample;
+      perfState.lastFps = (perfState.frameCount * 1000) / Math.max(1, elapsed);
+      perfState.lastFrameMs = perfState.frameSum / Math.max(1, perfState.frameCount);
+      // snapshot history
+      const snapshot = buildPerfLog();
+      perfState.history.push(snapshot);
+      if(perfState.history.length > 30){
+        perfState.history.shift();
+      }
+      perfState.lastSample = now;
+      perfState.frameCount = 0;
+      perfState.frameSum = 0;
+      perfState.updateSum = 0;
+      perfState.renderSum = 0;
+      perfState.updateMax = 0;
+      perfState.renderMax = 0;
+      perfState.circleSum = 0;
+      perfState.pathfindCalls = 0;
+      perfState.pathfindNodes = 0;
+      perfState.minimapRenders = 0;
+      perfState.intervalMax = 0;
+      perfCounters.circleChecks = 0;
+      perfCounters.pathfindCalls = 0;
+      perfCounters.pathfindNodesVisited = 0;
+      perfCounters.minimapRenders = 0;
+      updatePerfPanel();
+    }
   }
+
   function defaultAbilityBinding(index){
     const defaults = [
       { code: 'Digit1', key: '1', label: '1' },
@@ -7175,34 +7087,6 @@ import { createEventBus } from './core/events.js';
       return 'quick';
     }
     return 'none';
-  }
-
-  function normalizeAbilityCastType(ability, value){
-    const allowed = abilityAllowedCastTypes(ability);
-    if(!allowed || allowed.length === 0){
-      return normalizeCastType(value);
-    }
-    if(value === undefined || value === null || value === ''){
-      const fallback = defaultAbilityCastType(ability);
-      if(allowed.includes(fallback)){
-        return fallback;
-      }
-    }
-    const normalized = normalizeCastType(value);
-    if(allowed.includes(normalized)){
-      return normalized;
-    }
-    const fallback = defaultAbilityCastType(ability);
-    if(allowed.includes(fallback)){
-      return fallback;
-    }
-    const preferenceOrder = ['quickIndicator', 'normal', 'quick', 'none'];
-    for(const candidate of preferenceOrder){
-      if(allowed.includes(candidate)){
-        return candidate;
-      }
-    }
-    return allowed[0];
   }
 
   function setDefaultSpellCastType(value, { syncInput = true } = {}){
@@ -12591,6 +12475,7 @@ import { createEventBus } from './core/events.js';
       }
     },
     { button: btnColliders, pane: colliderPane },
+    { button: btnPerf, pane: perfPane },
     { button: btnGameState, pane: gameStatePane },
     { button: btnVision, pane: visionPane },
     { button: btnCamera, pane: cameraPane },
@@ -12603,7 +12488,7 @@ import { createEventBus } from './core/events.js';
     { button: btnScore, pane: scorePane },
     { button: btnUiLayout, pane: uiLayoutPane }
   ];
-  initSettingsPanel({
+  const settingsPanelApi = initSettingsPanel({
     app,
     sbHide,
     sbFab,
@@ -12611,48 +12496,31 @@ import { createEventBus } from './core/events.js';
     syncMenuMeasurements,
     playerRuntime
   });
-  const settingsMenuSections = (() => {
-    if(!sbContent){
-      return [];
-    }
-    const buttons = Array.from(sbContent.children || []).filter((node) => {
-      return node && node.classList && node.classList.contains('btn');
-    });
-    return buttons.map((btn) => {
-      const nodes = [btn];
-      let sibling = btn.nextElementSibling;
-      while(sibling && !sibling.classList.contains('btn')){
-        nodes.push(sibling);
-        sibling = sibling.nextElementSibling;
-      }
-      return { genre: btn.dataset.settingsGenre || 'core', nodes };
-    });
-  })();
+  const settingsSearch = createSettingsSearch({
+    settingsSearchOverlay,
+    settingsSearchInput,
+    settingsSearchResultsEl,
+    settingsSearchEmptyEl,
+    settingsSearchEmptyPrimary,
+    settingsSearchEmptySecondary,
+    settingsSearchStatusEl,
+    settingsSearchFacetsEl,
+    settingsSearchRecentsEl,
+    settingsSearchHelpBtn,
+    settingsSearchHelpEl,
+    settingsSearchHelpClose,
+    settingsSearchAskBtn,
+    deriveSettingHelp,
+    showSettingHelp,
+    setMenuState: settingsPanelApi && settingsPanelApi.setMenuState
+  });
+  window.searchSettings = settingsSearch.searchSettings;
+  initMobaSettingsMenu({
+    sbContent,
+    settingsGenreSelect,
+    syncMenuMeasurements
+  });
 
-  function applySettingsGenreFilter(value){
-    if(!settingsMenuSections.length){
-      return;
-    }
-    const selected = value || 'core';
-    settingsMenuSections.forEach((section) => {
-      const visible = section.genre === selected;
-      section.nodes.forEach((node) => {
-        if(!node) return;
-        if(!visible && node.classList && node.classList.contains('submenu')){
-          node.classList.remove('open');
-        }
-        node.classList.toggle('genre-hidden', !visible);
-      });
-    });
-    requestAnimationFrame(syncMenuMeasurements);
-  }
-
-  if(settingsGenreSelect){
-    settingsGenreSelect.addEventListener('change', () => {
-      applySettingsGenreFilter(settingsGenreSelect.value);
-    });
-    applySettingsGenreFilter(settingsGenreSelect.value || 'core');
-  }
   // State
   const CAMERA_WIDTH = 1920;
   const CAMERA_HEIGHT = 1080;
@@ -13866,1523 +13734,6 @@ import { createEventBus } from './core/events.js';
     camera.drag.last = null;
   }
 
-  const DEFAULT_SETTING_HELP = {
-    title: 'Settings',
-    text: 'Hover a control to learn what it does.'
-  };
-  let activeSettingHelpSource = null;
-
-  function showSettingHelp(title, text){
-    if(!settingHelpEl){
-      return;
-    }
-    const finalTitle = title && title.trim() ? title : DEFAULT_SETTING_HELP.title;
-    const finalText = text && text.trim() ? text : DEFAULT_SETTING_HELP.text;
-    if(settingHelpTitle){
-      settingHelpTitle.textContent = finalTitle;
-    }
-    if(settingHelpBody){
-      settingHelpBody.textContent = finalText;
-    }
-    settingHelpEl.classList.add('show');
-  }
-
-  function hideSettingHelp(source){
-    if(source && activeSettingHelpSource && source !== activeSettingHelpSource){
-      return;
-    }
-    activeSettingHelpSource = null;
-    if(!settingHelpEl){
-      return;
-    }
-    settingHelpEl.classList.remove('show');
-    if(settingHelpTitle){
-      settingHelpTitle.textContent = DEFAULT_SETTING_HELP.title;
-    }
-    if(settingHelpBody){
-      settingHelpBody.textContent = DEFAULT_SETTING_HELP.text;
-    }
-  }
-
-  function deriveSettingHelp(el){
-    if(!el || el === settingHelpEl){
-      return null;
-    }
-    let title = el.getAttribute('data-help-title');
-    let text = el.getAttribute('data-help-text');
-    if(!title){
-      if(el.classList.contains('btn') || el.classList.contains('subbtn')){
-        const hint = el.querySelector('.hint');
-        const raw = el.textContent || '';
-        title = raw && hint ? raw.replace(hint.textContent || '', '') : raw;
-      } else if(el.classList.contains('formrow')){
-        const labelEl = el.querySelector('label');
-        if(labelEl){
-          title = labelEl.textContent || '';
-        }
-      } else if(el.classList.contains('subhint')){
-        title = el.getAttribute('data-help-title') || 'Tip';
-      }
-    }
-    if(!text){
-      if(el.classList.contains('btn') || el.classList.contains('subbtn')){
-        const hint = el.querySelector('.hint');
-        if(hint && hint.textContent && hint.textContent.trim()){
-          text = hint.textContent;
-        } else if(el.getAttribute('title')){
-          text = el.getAttribute('title');
-        }
-      } else if(el.classList.contains('formrow')){
-        const labelEl = el.querySelector('label');
-        if(labelEl && labelEl.getAttribute('data-help-text')){
-          text = labelEl.getAttribute('data-help-text');
-        } else if(labelEl && labelEl.textContent){
-          text = `Adjust ${labelEl.textContent.trim().toLowerCase()}.`;
-        }
-      } else if(el.classList.contains('subhint')){
-        text = el.textContent || '';
-      }
-    }
-    title = title ? title.replace(/\s+/g, ' ').trim() : '';
-    text = text ? text.replace(/\s+/g, ' ').trim() : '';
-    if(!title && !text){
-      return null;
-    }
-    if(!text){
-      text = title;
-    }
-    return { title, text };
-  }
-
-  function attachSettingHelp(el){
-    const data = deriveSettingHelp(el);
-    if(!data){
-      return;
-    }
-    const show = () => {
-      activeSettingHelpSource = el;
-      showSettingHelp(data.title, data.text);
-    };
-    const hide = () => hideSettingHelp(el);
-    el.addEventListener('mouseenter', show);
-    el.addEventListener('focusin', show);
-    el.addEventListener('mouseleave', hide);
-    el.addEventListener('focusout', hide);
-  }
-
-  function initializeSettingHelp(){
-    if(!settingHelpEl){
-      return;
-    }
-    if(settingHelpTitle){
-      settingHelpTitle.textContent = DEFAULT_SETTING_HELP.title;
-    }
-    if(settingHelpBody){
-      settingHelpBody.textContent = DEFAULT_SETTING_HELP.text;
-    }
-    if(sidebarEl){
-      const targets = sidebarEl.querySelectorAll('.btn, .subbtn, .formrow, .subhint');
-      targets.forEach((el) => attachSettingHelp(el));
-      sidebarEl.addEventListener('mouseleave', () => hideSettingHelp());
-    }
-  }
-
-  const SETTINGS_SEARCH_FIELD_WEIGHTS = { title: 5, aliases: 4, tags: 3, path: 2, desc: 1 };
-  const SETTINGS_SEARCH_DEBOUNCE_MS = 120;
-  const SETTINGS_SEARCH_RECENT_LIMIT = 20;
-  const SETTINGS_SEARCH_CACHE_LIMIT = 20;
-  const SETTINGS_SEARCH_RESULT_LIMIT = 50;
-
-  const settingsSearchState = {
-    docs: [],
-    docById: new Map(),
-    invertedIndex: new Map(),
-    tokenCatalog: new Set(),
-    trigramIndex: new Map(),
-    queryCache: new Map(),
-    cacheOrder: [],
-    resultElements: new Map(),
-    controlSubscriptions: [],
-    open: false,
-    activeIndex: -1,
-    requestId: 0,
-    recentQueries: [],
-    lastRenderQuery: '',
-    results: [],
-    tokens: []
-  };
-
-  function normalizeSearchString(str){
-    if(typeof str !== 'string'){
-      return '';
-    }
-    return str.normalize('NFKD').toLowerCase();
-  }
-
-  function tokenizeSearchText(text){
-    const normalized = normalizeSearchString(text);
-    if(!normalized){
-      return [];
-    }
-    return normalized.split(/[^a-z0-9]+/).filter(Boolean);
-  }
-
-  function parseList(value){
-    if(typeof value !== 'string'){
-      return [];
-    }
-    return value.split(/[,;]/).map(part => part.trim()).filter(Boolean);
-  }
-
-  function escapeHtml(value){
-    if(typeof value !== 'string'){
-      return '';
-    }
-    return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function findAllOccurrences(haystack, needle){
-    const ranges = [];
-    if(!haystack || !needle){
-      return ranges;
-    }
-    let index = haystack.indexOf(needle);
-    while(index !== -1){
-      ranges.push({ start: index, end: index + needle.length });
-      index = haystack.indexOf(needle, index + needle.length);
-    }
-    return ranges;
-  }
-
-  function mergeRanges(ranges){
-    if(!Array.isArray(ranges) || !ranges.length){
-      return [];
-    }
-    const sorted = ranges.slice().sort((a, b)=> a.start - b.start || a.end - b.end);
-    const merged = [];
-    for(const range of sorted){
-      if(!merged.length){
-        merged.push({ start: range.start, end: range.end });
-        continue;
-      }
-      const prev = merged[merged.length - 1];
-      if(range.start <= prev.end){
-        prev.end = Math.max(prev.end, range.end);
-      } else {
-        merged.push({ start: range.start, end: range.end });
-      }
-    }
-    return merged;
-  }
-
-  function highlightText(text, ranges){
-    if(!text){
-      return '';
-    }
-    const merged = mergeRanges(ranges);
-    if(!merged.length){
-      return escapeHtml(text);
-    }
-    let cursor = 0;
-    let output = '';
-    for(const range of merged){
-      const start = Math.max(0, range.start);
-      const end = Math.min(text.length, range.end);
-      if(start > cursor){
-        output += escapeHtml(text.slice(cursor, start));
-      }
-      const slice = text.slice(start, end);
-      output += `<span class="settingsSearchHighlight">${escapeHtml(slice)}</span>`;
-      cursor = end;
-    }
-    if(cursor < text.length){
-      output += escapeHtml(text.slice(cursor));
-    }
-    return output;
-  }
-
-  function clampNumericForControl(control, value){
-    if(!control){
-      return value;
-    }
-    let numeric = Number(value);
-    if(!Number.isFinite(numeric)){
-      numeric = Number(control.value);
-    }
-    const minAttr = control.getAttribute('min');
-    const maxAttr = control.getAttribute('max');
-    if(minAttr !== null){
-      const min = Number(minAttr);
-      if(Number.isFinite(min)){
-        numeric = Math.max(min, numeric);
-      }
-    }
-    if(maxAttr !== null){
-      const max = Number(maxAttr);
-      if(Number.isFinite(max)){
-        numeric = Math.min(max, numeric);
-      }
-    }
-    return numeric;
-  }
-
-  function formatSettingValue(doc, value){
-    if(value === null || value === undefined){
-      return 'â€”';
-    }
-    if(doc.valueTypeNormalized === 'number'){
-      const numeric = Number(value);
-      if(!Number.isFinite(numeric)){
-        return String(value);
-      }
-      const step = doc.step;
-      if(Number.isFinite(step) && step > 0 && step < 1){
-        return numeric.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
-      }
-      if(Math.abs(numeric) >= 1000){
-        return Math.round(numeric).toLocaleString();
-      }
-      return String(Math.round(numeric * 1000) / 1000);
-    }
-    return String(value);
-  }
-
-  function getControlValue(control, valueType){
-    if(!control){
-      return null;
-    }
-    const tag = control.tagName;
-    if(valueType === 'boolean'){
-      const ariaPressed = control.getAttribute('aria-pressed');
-      if(ariaPressed === 'true'){ return true; }
-      if(ariaPressed === 'false'){ return false; }
-      if(control.dataset && typeof control.dataset.active === 'string'){
-        return control.dataset.active === 'true';
-      }
-      return !!control.classList.contains('is-active');
-    }
-    if(tag === 'SELECT' || tag === 'TEXTAREA'){
-      return control.value;
-    }
-    if(tag === 'INPUT'){
-      const type = control.getAttribute('type') || 'text';
-      if(type === 'number' || type === 'range'){
-        const numeric = Number(control.value);
-        return Number.isFinite(numeric) ? numeric : null;
-      }
-      if(type === 'text' || type === 'color'){
-        return control.value;
-      }
-    }
-    if(tag === 'BUTTON'){
-      return control.textContent || '';
-    }
-    return control.value;
-  }
-
-  function setControlValue(control, value, valueType, { commit = false } = {}){
-    if(!control){
-      return;
-    }
-    if(valueType === 'number'){
-      const clamped = clampNumericForControl(control, value);
-      control.value = String(clamped);
-      control.dispatchEvent(new Event('input', { bubbles: true }));
-      if(commit){
-        control.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      return;
-    }
-    if(valueType === 'boolean'){
-      control.click();
-      return;
-    }
-    control.value = String(value);
-    control.dispatchEvent(new Event('input', { bubbles: true }));
-    if(commit){
-      control.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-  }
-
-  function deriveGroupTitle(pane){
-    if(!pane){
-      return 'Settings';
-    }
-    if(pane.dataset && pane.dataset.settingGroup){
-      return pane.dataset.settingGroup;
-    }
-    let sibling = pane.previousElementSibling;
-    while(sibling){
-      if(sibling.classList && sibling.classList.contains('btn')){
-        const help = deriveSettingHelp(sibling);
-        if(help && help.title){
-          return help.title;
-        }
-        const raw = sibling.textContent || '';
-        if(raw.trim()){
-          return raw.replace(/\s+/g, ' ').trim();
-        }
-      }
-      sibling = sibling.previousElementSibling;
-    }
-    return 'Settings';
-  }
-
-  function sanitizeSettingId(id, fallbackIndex){
-    if(id && typeof id === 'string'){
-      const trimmed = id.trim();
-      if(trimmed){
-        return trimmed;
-      }
-    }
-    return `setting.${fallbackIndex}`;
-  }
-
-  function registerDocToken(doc, token, field){
-    if(!token){
-      return;
-    }
-    if(!doc.tokenFieldMap){
-      doc.tokenFieldMap = new Map();
-    }
-    if(!doc.tokenFieldMap.has(token)){
-      doc.tokenFieldMap.set(token, new Set());
-    }
-    doc.tokenFieldMap.get(token).add(field);
-    if(!doc.allTokens){
-      doc.allTokens = new Set();
-    }
-    doc.allTokens.add(token);
-  }
-
-  function collectSettingsDocuments(){
-    const documents = [];
-    const panes = document.querySelectorAll('.submenu');
-    panes.forEach((pane)=>{
-      const groupTitle = deriveGroupTitle(pane);
-      const scope = pane.dataset && pane.dataset.settingScope ? pane.dataset.settingScope : 'global';
-      const rows = pane.querySelectorAll('.formrow');
-      rows.forEach((row)=>{
-        if(row.dataset && row.dataset.settingIgnore === 'true'){
-          return;
-        }
-        const controlSelector = row.dataset && row.dataset.settingControl
-          ? `#${CSS.escape(row.dataset.settingControl)}`
-          : 'input:not([type="file"]):not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="button"]), select, textarea';
-        let control = null;
-        if(row.dataset && row.dataset.settingControl){
-          control = row.querySelector(controlSelector);
-        }
-        if(!control){
-          const candidates = row.querySelectorAll(controlSelector);
-          for(const candidate of candidates){
-            if(candidate && candidate.id){
-              control = candidate;
-              break;
-            }
-            control = candidate;
-          }
-        }
-        if(!control){
-          return;
-        }
-        if(control.tagName === 'INPUT'){
-          const type = control.getAttribute('type');
-          if(type === 'file' || type === 'hidden' || type === 'radio' || type === 'checkbox' || type === 'button'){
-            return;
-          }
-        }
-        const rowId = row.dataset && row.dataset.settingId ? row.dataset.settingId : null;
-        const controlId = control.dataset && control.dataset.settingId ? control.dataset.settingId : null;
-        const rawId = rowId || controlId || control.id || row.id;
-        const docId = sanitizeSettingId(rawId, documents.length);
-        if(settingsSearchState.docById.has(docId)){
-          return;
-        }
-        const help = deriveSettingHelp(row) || deriveSettingHelp(control) || deriveSettingHelp(pane);
-        const title = (row.dataset && row.dataset.settingTitle) || (help && help.title) || (row.querySelector('label') ? (row.querySelector('label').textContent || '').trim() : docId);
-        const desc = (row.dataset && row.dataset.settingDesc) || (help && help.text) || '';
-        const section = row.dataset && row.dataset.settingSection ? row.dataset.settingSection : '';
-        const basePath = pane.dataset && pane.dataset.settingPath ? pane.dataset.settingPath : groupTitle;
-        const path = section ? `${basePath} â€º ${section}` : basePath;
-        let valueType = (row.dataset && row.dataset.settingType) || (control.dataset && control.dataset.settingType) || '';
-        valueType = valueType ? valueType.toLowerCase() : '';
-        if(!valueType){
-          const tagName = control.tagName;
-          if(tagName === 'SELECT'){
-            valueType = 'enum';
-          } else if(tagName === 'TEXTAREA'){
-            valueType = 'string';
-          } else if(tagName === 'INPUT'){
-            const typeAttr = control.getAttribute('type');
-            if(typeAttr === 'number' || typeAttr === 'range'){
-              valueType = 'number';
-            } else if(typeAttr === 'color'){
-              valueType = 'color';
-            } else {
-              valueType = 'string';
-            }
-          } else if(tagName === 'BUTTON'){
-            valueType = 'action';
-          } else {
-            valueType = 'string';
-          }
-        }
-        const tags = parseList((row.dataset && row.dataset.settingTags) || '');
-        const aliases = parseList((row.dataset && row.dataset.settingAliases) || '');
-        const defaultValueAttr = row.dataset && row.dataset.settingDefault ? row.dataset.settingDefault : control.getAttribute('data-default');
-        let defaultValue = null;
-        if(defaultValueAttr !== null && defaultValueAttr !== undefined){
-          if(valueType === 'number'){
-            const numeric = Number(defaultValueAttr);
-            defaultValue = Number.isFinite(numeric) ? numeric : null;
-          } else if(valueType === 'boolean'){
-            defaultValue = defaultValueAttr === 'true' || defaultValueAttr === '1';
-          } else {
-            defaultValue = defaultValueAttr;
-          }
-        } else {
-          defaultValue = getControlValue(control, valueType);
-        }
-        const doc = {
-          id: docId,
-          title: title && title.trim() ? title.trim() : docId,
-          desc: desc && desc.trim() ? desc.trim() : '',
-          path,
-          valueType,
-          tags: tags.map(tag => tag.toLowerCase()),
-          aliases,
-          default: defaultValue,
-          scope: (row.dataset && row.dataset.settingScope) || scope,
-          isExperimental: row.dataset && row.dataset.settingExperimental === 'true',
-          element: row,
-          control,
-          min: control.getAttribute('min') !== null ? Number(control.getAttribute('min')) : null,
-          max: control.getAttribute('max') !== null ? Number(control.getAttribute('max')) : null,
-          step: control.getAttribute('step') !== null && control.getAttribute('step') !== 'any' ? Number(control.getAttribute('step')) : null,
-          currentValue: getControlValue(control, valueType)
-        };
-        documents.push(doc);
-      });
-    });
-    return documents;
-  }
-
-  function decorateSettingDoc(doc, index){
-    doc.index = index;
-    doc.valueTypeNormalized = doc.valueType ? doc.valueType.toLowerCase() : 'string';
-    doc.scopeNormalized = doc.scope ? doc.scope.toLowerCase() : 'global';
-    doc.titleNormalized = normalizeSearchString(doc.title);
-    doc.descNormalized = normalizeSearchString(doc.desc);
-    doc.pathNormalized = normalizeSearchString(doc.path);
-    doc.aliasTokens = doc.aliases.flatMap(tokenizeSearchText);
-    doc.tagTokens = doc.tags.map(tag => normalizeSearchString(tag));
-    doc.idTokens = tokenizeSearchText(doc.id.replace(/\./g, ' '));
-    doc.pathDepth = doc.path && doc.path.includes('â€º') ? doc.path.split('â€º').length : (doc.path ? 1 : 0);
-    doc.tokenFieldMap = new Map();
-    doc.allTokens = new Set();
-    tokenizeSearchText(doc.title).forEach(token => registerDocToken(doc, token, 'title'));
-    tokenizeSearchText(doc.desc).forEach(token => registerDocToken(doc, token, 'desc'));
-    tokenizeSearchText(doc.path).forEach(token => registerDocToken(doc, token, 'path'));
-    doc.aliasTokens.forEach(token => registerDocToken(doc, token, 'aliases'));
-    doc.tagTokens.forEach(token => registerDocToken(doc, token, 'tags'));
-    doc.idTokens.forEach(token => registerDocToken(doc, token, 'aliases'));
-    doc.usageCount = doc.usageCount || 0;
-    doc.lastUsedAt = doc.lastUsedAt || 0;
-  }
-
-  function registerTrigrams(token){
-    if(!token){
-      return;
-    }
-    const normalized = token.toLowerCase();
-    if(normalized.length < 3){
-      if(!settingsSearchState.trigramIndex.has(normalized)){
-        settingsSearchState.trigramIndex.set(normalized, new Set());
-      }
-      settingsSearchState.trigramIndex.get(normalized).add(normalized);
-      return;
-    }
-    for(let i = 0; i <= normalized.length - 3; i++){
-      const tri = normalized.slice(i, i + 3);
-      if(!settingsSearchState.trigramIndex.has(tri)){
-        settingsSearchState.trigramIndex.set(tri, new Set());
-      }
-      settingsSearchState.trigramIndex.get(tri).add(normalized);
-    }
-  }
-
-  function buildSettingsSearchIndex(){
-    settingsSearchState.invertedIndex.clear();
-    settingsSearchState.tokenCatalog.clear();
-    settingsSearchState.trigramIndex.clear();
-    settingsSearchState.docs.forEach((doc, index)=>{
-      decorateSettingDoc(doc, index);
-      doc.allTokens.forEach((token)=>{
-        settingsSearchState.tokenCatalog.add(token);
-        registerTrigrams(token);
-        if(!settingsSearchState.invertedIndex.has(token)){
-          settingsSearchState.invertedIndex.set(token, new Set());
-        }
-        settingsSearchState.invertedIndex.get(token).add(index);
-      });
-    });
-  }
-
-  function buildTrigramsForQuery(token){
-    const normalized = token.toLowerCase();
-    if(normalized.length < 3){
-      return [normalized];
-    }
-    const trigrams = [];
-    for(let i = 0; i <= normalized.length - 3; i++){
-      trigrams.push(normalized.slice(i, i + 3));
-    }
-    return trigrams;
-  }
-
-  function findFuzzyTokens(token){
-    const normalized = token.toLowerCase();
-    if(normalized.length < 5){
-      return [];
-    }
-    const candidates = new Set();
-    const trigrams = buildTrigramsForQuery(normalized);
-    trigrams.forEach((tri)=>{
-      const bucket = settingsSearchState.trigramIndex.get(tri);
-      if(bucket){
-        bucket.forEach((candidate)=> candidates.add(candidate));
-      }
-    });
-    if(!candidates.size || candidates.size > settingsSearchState.tokenCatalog.size){
-      settingsSearchState.tokenCatalog.forEach(tokenValue => candidates.add(tokenValue));
-    }
-    const matches = [];
-    candidates.forEach((candidate)=>{
-      if(Math.abs(candidate.length - normalized.length) > 2){
-        return;
-      }
-      let distance = 0;
-      const dp = Array(normalized.length + 1);
-      for(let i = 0; i <= normalized.length; i++){
-        dp[i] = i;
-      }
-      for(let j = 1; j <= candidate.length; j++){
-        let prev = dp[0];
-        dp[0] = j;
-        for(let i = 1; i <= normalized.length; i++){
-          const temp = dp[i];
-          if(normalized[i - 1] === candidate[j - 1]){
-            dp[i] = prev;
-          } else {
-            dp[i] = Math.min(prev + 1, dp[i] + 1, dp[i - 1] + 1);
-          }
-          prev = temp;
-        }
-      }
-      distance = dp[normalized.length];
-      if(distance <= 1){
-        matches.push({ token: candidate, distance });
-      }
-    });
-    return matches;
-  }
-
-  function parseSearchQuery(query){
-    const raw = typeof query === 'string' ? query : '';
-    const parts = raw.trim().split(/\s+/).filter(Boolean);
-    const filters = { type: '', scope: '', tags: [], experimental: null };
-    const tokens = [];
-    parts.forEach((part)=>{
-      const idx = part.indexOf(':');
-      if(idx > 0){
-        const key = part.slice(0, idx).toLowerCase();
-        const value = part.slice(idx + 1).toLowerCase();
-        if(key === 'type' || key === 'value' || key === 'kind'){
-          filters.type = value;
-          return;
-        }
-        if(key === 'scope'){ filters.scope = value; return; }
-        if(key === 'tag' || key === 'tags'){ filters.tags.push(value); return; }
-        if(key === 'experimental'){
-          filters.experimental = value === 'true' || value === '1';
-          return;
-        }
-      }
-      tokens.push(part);
-    });
-    const normalizedTokens = tokens.flatMap(tokenizeSearchText);
-    return { raw, tokens: normalizedTokens, filters };
-  }
-
-  function gatherCandidateDocs(tokens){
-    const indices = new Set();
-    const fuzzyMatches = new Map();
-    tokens.forEach((token)=>{
-      const bucket = settingsSearchState.invertedIndex.get(token);
-      if(bucket && bucket.size){
-        bucket.forEach((index)=> indices.add(index));
-        return;
-      }
-      const fuzzy = findFuzzyTokens(token);
-      if(fuzzy.length){
-        fuzzyMatches.set(token, fuzzy);
-        fuzzy.forEach((entry)=>{
-          const fuzzyBucket = settingsSearchState.invertedIndex.get(entry.token);
-          if(fuzzyBucket){
-            fuzzyBucket.forEach((index)=> indices.add(index));
-          }
-        });
-      }
-    });
-    if(!indices.size){
-      settingsSearchState.docs.forEach((_, index)=> indices.add(index));
-    }
-    return { indices: Array.from(indices), fuzzyMatches };
-  }
-
-  function passesFilters(doc, filters){
-    if(!filters){
-      return true;
-    }
-    if(filters.type){
-      const type = filters.type.toLowerCase();
-      if(doc.valueTypeNormalized !== type){
-        if(type === 'boolean' && doc.valueTypeNormalized !== 'boolean'){ return false; }
-        else if(type === 'number' && doc.valueTypeNormalized !== 'number'){ return false; }
-        else if(type === 'string' && doc.valueTypeNormalized !== 'string'){ return false; }
-        else if(type === 'enum' && doc.valueTypeNormalized !== 'enum'){ return false; }
-      }
-    }
-    if(filters.scope){
-      const scope = filters.scope.toLowerCase();
-      if(doc.scopeNormalized !== scope){
-        return false;
-      }
-    }
-    if(filters.tags && filters.tags.length){
-      for(const tag of filters.tags){
-        if(!doc.tagTokens.includes(tag.toLowerCase())){
-          return false;
-        }
-      }
-    }
-    if(filters.experimental !== null){
-      if(Boolean(doc.isExperimental) !== Boolean(filters.experimental)){
-        return false;
-      }
-    }
-    return true;
-  }
-
-  function weightForFields(fieldSet){
-    if(!fieldSet || !fieldSet.size){
-      return 0;
-    }
-    let weight = 0;
-    fieldSet.forEach((field)=>{
-      const fieldWeight = SETTINGS_SEARCH_FIELD_WEIGHTS[field] || 0;
-      if(fieldWeight > weight){
-        weight = fieldWeight;
-      }
-    });
-    return weight;
-  }
-
-  function computeUsageBoost(doc){
-    if(!doc || !doc.usageCount){
-      return 0;
-    }
-    return Math.min(6, Math.log2(doc.usageCount + 1) * 1.5);
-  }
-
-  function computeRecencyBoost(doc){
-    if(!doc || !doc.lastUsedAt){
-      return 0;
-    }
-    const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
-    const seconds = Math.max(0, (now - doc.lastUsedAt) / 1000);
-    if(seconds < 5){ return 6; }
-    if(seconds < 30){ return 4; }
-    if(seconds < 120){ return 2; }
-    if(seconds < 600){ return 1; }
-    return 0;
-  }
-
-  function scoreDoc(doc, tokens, fuzzyMatches){
-    let score = 0;
-    const titleRanges = [];
-    const descRanges = [];
-    let exactMatchCount = 0;
-    const consideredTokens = tokens.length ? tokens : Array.from(doc.allTokens || []);
-    for(const token of consideredTokens){
-      const hasToken = doc.allTokens && doc.allTokens.has(token);
-      if(hasToken){
-        const fields = doc.tokenFieldMap.get(token) || new Set();
-        const weight = weightForFields(fields);
-        if(weight){
-          score += weight;
-        }
-        if(fields.has('title')){
-          titleRanges.push(...findAllOccurrences(doc.titleNormalized, token));
-        }
-        if(fields.has('desc')){
-          descRanges.push(...findAllOccurrences(doc.descNormalized, token));
-        }
-        exactMatchCount += 1;
-        continue;
-      }
-      const fuzzyForToken = fuzzyMatches.get(token);
-      if(fuzzyForToken){
-        for(const match of fuzzyForToken){
-          if(doc.allTokens && doc.allTokens.has(match.token)){
-            const fields = doc.tokenFieldMap.get(match.token) || new Set();
-            const weight = weightForFields(fields);
-            if(weight){
-              score += weight * 0.65;
-            }
-            if(fields.has('title')){
-              titleRanges.push(...findAllOccurrences(doc.titleNormalized, match.token));
-            }
-            if(fields.has('desc')){
-              descRanges.push(...findAllOccurrences(doc.descNormalized, match.token));
-            }
-            break;
-          }
-        }
-      }
-    }
-    score += computeUsageBoost(doc);
-    score += computeRecencyBoost(doc);
-    if(exactMatchCount){
-      score += exactMatchCount * 0.5;
-    }
-    return { score, titleRanges: mergeRanges(titleRanges), descRanges: mergeRanges(descRanges) };
-  }
-
-  function buildFacetsFromDocs(documents){
-    const facets = { tags: new Map(), types: new Map(), scopes: new Map() };
-    documents.forEach((doc)=>{
-      doc.tags.forEach((tag)=>{
-        const key = tag.toLowerCase();
-        facets.tags.set(key, (facets.tags.get(key) || 0) + 1);
-      });
-      const type = doc.valueTypeNormalized || 'string';
-      facets.types.set(type, (facets.types.get(type) || 0) + 1);
-      const scope = doc.scopeNormalized || 'global';
-      facets.scopes.set(scope, (facets.scopes.get(scope) || 0) + 1);
-    });
-    const toArray = (map, labelTransform = (value)=> value) => Array.from(map.entries())
-      .sort((a, b)=> b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, 8)
-      .map(([value, count])=> ({ value, label: labelTransform(value), count }));
-    return {
-      tags: toArray(facets.tags, (value)=> value.replace(/\b\w/g, (m)=> m.toUpperCase())),
-      types: toArray(facets.types, (value)=> value.charAt(0).toUpperCase() + value.slice(1)),
-      scopes: toArray(facets.scopes, (value)=> value.charAt(0).toUpperCase() + value.slice(1))
-    };
-  }
-
-  function computeDidYouMean(parsed, fuzzyMatches){
-    if(!parsed || !parsed.tokens.length){
-      return null;
-    }
-    const suggestions = [];
-    let changed = false;
-    parsed.tokens.forEach((token)=>{
-      const fuzzies = fuzzyMatches.get(token);
-      if(fuzzies && fuzzies.length){
-        const best = fuzzies.reduce((winner, entry)=>{
-          if(!winner || entry.distance < winner.distance){
-            return entry;
-          }
-          return winner;
-        }, null);
-        if(best && best.token){
-          suggestions.push(best.token);
-          if(best.token !== token){
-            changed = true;
-          }
-          return;
-        }
-      }
-      suggestions.push(token);
-    });
-    if(!changed){
-      return null;
-    }
-    return suggestions.join(' ');
-  }
-
-  function searchSettings(query, opts = {}){
-    const limit = Number.isFinite(opts.limit) ? opts.limit : SETTINGS_SEARCH_RESULT_LIMIT;
-    const cacheKey = normalizeSearchString(query);
-    let parsed = settingsSearchState.queryCache.get(cacheKey);
-    if(!parsed){
-      parsed = parseSearchQuery(query || '');
-      settingsSearchState.queryCache.set(cacheKey, parsed);
-      settingsSearchState.cacheOrder.unshift(cacheKey);
-      if(settingsSearchState.cacheOrder.length > SETTINGS_SEARCH_CACHE_LIMIT){
-        const staleKey = settingsSearchState.cacheOrder.pop();
-        settingsSearchState.queryCache.delete(staleKey);
-      }
-    } else {
-      const index = settingsSearchState.cacheOrder.indexOf(cacheKey);
-      if(index >= 0){
-        settingsSearchState.cacheOrder.splice(index, 1);
-      }
-      settingsSearchState.cacheOrder.unshift(cacheKey);
-    }
-
-    const t0 = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
-    const { indices, fuzzyMatches } = gatherCandidateDocs(parsed.tokens);
-    const hits = [];
-    indices.forEach((index)=>{
-      const doc = settingsSearchState.docs[index];
-      if(!doc){
-        return;
-      }
-      if(!passesFilters(doc, parsed.filters)){
-        return;
-      }
-      const { score, titleRanges, descRanges } = scoreDoc(doc, parsed.tokens, fuzzyMatches);
-      if(parsed.tokens.length && score <= 0){
-        return;
-      }
-      hits.push({
-        doc,
-        score,
-        titleRanges,
-        descRanges
-      });
-    });
-    hits.sort((a, b)=>{
-      if(b.score !== a.score){
-        return b.score - a.score;
-      }
-      if(a.doc.pathDepth !== b.doc.pathDepth){
-        return a.doc.pathDepth - b.doc.pathDepth;
-      }
-      return a.doc.title.localeCompare(b.doc.title);
-    });
-    const total = hits.length;
-    const limited = hits.slice(0, Math.max(1, limit)).map((entry, rank)=> ({
-      id: entry.doc.id,
-      title: entry.doc.title,
-      desc: entry.doc.desc,
-      path: entry.doc.path,
-      valueType: entry.doc.valueType,
-      scope: entry.doc.scope,
-      tags: entry.doc.tags.slice(),
-      isExperimental: entry.doc.isExperimental,
-      score: entry.score,
-      highlight: { title: entry.titleRanges, desc: entry.descRanges },
-      deepLink: `/settings#${encodeURIComponent(entry.doc.id)}`,
-      rank: rank + 1,
-      doc: entry.doc
-    }));
-    const facets = buildFacetsFromDocs(hits.map(hit => hit.doc));
-    const elapsedMs = (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - t0;
-    const didYouMean = total === 0 ? computeDidYouMean(parsed, fuzzyMatches) : null;
-    return { results: limited, total, facets, didYouMean, elapsedMs, tokens: parsed.tokens, filters: parsed.filters, raw: parsed.raw };
-  }
-
-  window.searchSettings = searchSettings;
-
-  function disposeSettingsControlSubscriptions(){
-    settingsSearchState.controlSubscriptions.forEach((sub)=>{
-      if(sub.control){
-        if(sub.input){ sub.control.removeEventListener('input', sub.input); }
-        if(sub.change){ sub.control.removeEventListener('change', sub.change); }
-      }
-    });
-    settingsSearchState.controlSubscriptions.length = 0;
-  }
-
-  function markSettingUsed(doc, { trackUsage = true } = {}){
-    if(!doc){
-      return;
-    }
-    if(trackUsage){
-      doc.usageCount = (doc.usageCount || 0) + 1;
-    }
-    doc.lastUsedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
-  }
-
-  function attachSettingsControlSubscriptions(){
-    disposeSettingsControlSubscriptions();
-    settingsSearchState.docs.forEach((doc)=>{
-      const control = doc.control;
-      if(!control){
-        return;
-      }
-      const handleInput = ()=>{
-        doc.currentValue = getControlValue(control, doc.valueTypeNormalized);
-        updateSearchResultValue(doc);
-      };
-      const handleChange = ()=>{
-        doc.currentValue = getControlValue(control, doc.valueTypeNormalized);
-        markSettingUsed(doc);
-        updateSearchResultValue(doc);
-      };
-      control.addEventListener('input', handleInput);
-      control.addEventListener('change', handleChange);
-      settingsSearchState.controlSubscriptions.push({ control, input: handleInput, change: handleChange });
-    });
-  }
-
-  function rebuildSettingsSearchIndex(){
-    settingsSearchState.docs = collectSettingsDocuments();
-    settingsSearchState.docById.clear();
-    settingsSearchState.docs.forEach((doc)=>{
-      settingsSearchState.docById.set(doc.id, doc);
-    });
-    buildSettingsSearchIndex();
-    attachSettingsControlSubscriptions();
-  }
-
-  function ensureRecentQueriesContains(query){
-    const trimmed = (query || '').trim();
-    if(!trimmed){
-      return;
-    }
-    const lower = trimmed.toLowerCase();
-    const index = settingsSearchState.recentQueries.findIndex((entry)=> entry.toLowerCase() === lower);
-    if(index >= 0){
-      settingsSearchState.recentQueries.splice(index, 1);
-    }
-    settingsSearchState.recentQueries.unshift(trimmed);
-    if(settingsSearchState.recentQueries.length > SETTINGS_SEARCH_RECENT_LIMIT){
-      settingsSearchState.recentQueries.length = SETTINGS_SEARCH_RECENT_LIMIT;
-    }
-  }
-
-  function updateSearchResultValue(doc){
-    const entry = settingsSearchState.resultElements.get(doc.id);
-    if(!entry){
-      return;
-    }
-    if(entry.slider){
-      const value = doc.currentValue;
-      if(value !== null && value !== undefined){
-        entry.slider.value = String(value);
-      }
-    }
-    if(entry.number){
-      const value = doc.currentValue;
-      if(value !== null && value !== undefined){
-        entry.number.value = String(value);
-      }
-    }
-    if(entry.valueLabel){
-      entry.valueLabel.textContent = formatSettingValue(doc, doc.currentValue);
-    }
-  }
-
-  let settingsSearchDebounceHandle = null;
-  let settingsSearchPreviousFocus = null;
-
-  function renderSettingsFacets(facets){
-    if(!settingsSearchFacetsEl){
-      return;
-    }
-    settingsSearchFacetsEl.innerHTML = '';
-    if(!facets){
-      return;
-    }
-    const createChip = (label, kind, value, count)=>{
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'settingsSearchFacet';
-      chip.dataset.kind = kind;
-      chip.dataset.value = value;
-      chip.innerHTML = `${escapeHtml(label)}<span aria-hidden="true"> Â· ${count}</span>`;
-      chip.addEventListener('click', ()=> applyFacetFilter(kind, value));
-      return chip;
-    };
-    const fragment = document.createDocumentFragment();
-    (facets.tags || []).forEach(entry => fragment.appendChild(createChip(entry.label, 'tag', entry.value, entry.count)));
-    (facets.types || []).forEach(entry => fragment.appendChild(createChip(entry.label, 'type', entry.value, entry.count)));
-    (facets.scopes || []).forEach(entry => fragment.appendChild(createChip(entry.label, 'scope', entry.value, entry.count)));
-    settingsSearchFacetsEl.appendChild(fragment);
-  }
-
-  function renderSettingsRecents(){
-    if(!settingsSearchRecentsEl){
-      return;
-    }
-    settingsSearchRecentsEl.innerHTML = '';
-    if(!settingsSearchState.recentQueries.length){
-      return;
-    }
-    const fragment = document.createDocumentFragment();
-    settingsSearchState.recentQueries.slice(0, 6).forEach((query)=>{
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'settingsSearchRecentQuery';
-      btn.textContent = query;
-      btn.addEventListener('click', ()=>{
-        if(settingsSearchInput){
-          settingsSearchInput.value = query;
-          scheduleSettingsSearch(query);
-          settingsSearchInput.focus();
-        }
-      });
-      fragment.appendChild(btn);
-    });
-    settingsSearchRecentsEl.appendChild(fragment);
-  }
-
-  function renderSettingsSearchResults(payload){
-    if(!settingsSearchResultsEl || !settingsSearchEmptyEl || !settingsSearchStatusEl){
-      return;
-    }
-    settingsSearchState.results = payload.results || [];
-    settingsSearchState.tokens = payload.tokens || [];
-    settingsSearchState.resultElements.clear();
-    settingsSearchResultsEl.innerHTML = '';
-    const listFragment = document.createDocumentFragment();
-    if(settingsSearchInput){
-      settingsSearchInput.setAttribute('aria-expanded', settingsSearchState.results.length ? 'true' : 'false');
-    }
-    if(settingsSearchState.results.length){
-      settingsSearchEmptyEl.hidden = true;
-      settingsSearchResultsEl.removeAttribute('hidden');
-      settingsSearchState.results.forEach((hit)=>{
-        const doc = hit.doc;
-        const option = document.createElement('div');
-        option.className = 'settingsSearchResult';
-        const optionId = `settingsSearchOption-${doc.id.replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
-        option.id = optionId;
-        option.setAttribute('role', 'option');
-        option.setAttribute('aria-selected', 'false');
-        option.dataset.docId = doc.id;
-        const main = document.createElement('div');
-        main.className = 'settingsSearchResultMain';
-        const title = document.createElement('div');
-        title.className = 'settingsSearchResultTitle';
-        title.innerHTML = highlightText(doc.title, hit.highlight && hit.highlight.title || []);
-        const path = document.createElement('div');
-        path.className = 'settingsSearchResultPath';
-        path.textContent = doc.path;
-        const desc = document.createElement('div');
-        desc.className = 'settingsSearchResultDesc';
-        const descText = doc.desc || '';
-        desc.innerHTML = highlightText(descText.length > 240 ? `${descText.slice(0, 237)}â€¦` : descText, hit.highlight && hit.highlight.desc || []);
-        main.appendChild(title);
-        main.appendChild(path);
-        if(descText){
-          main.appendChild(desc);
-        }
-        const action = document.createElement('div');
-        action.className = 'settingsSearchResultAction';
-        const valueLabel = document.createElement('span');
-        valueLabel.className = 'settingsSearchResultValue';
-        valueLabel.textContent = formatSettingValue(doc, doc.currentValue);
-        action.appendChild(valueLabel);
-        let slider = null;
-        let number = null;
-        if(doc.valueTypeNormalized === 'number' && doc.min !== null && doc.max !== null){
-          slider = document.createElement('input');
-          slider.type = 'range';
-          slider.className = 'settingsSearchResultSlider';
-          slider.min = Number.isFinite(doc.min) ? String(doc.min) : '0';
-          slider.max = Number.isFinite(doc.max) ? String(doc.max) : '100';
-          if(Number.isFinite(doc.step) && doc.step > 0){
-            slider.step = String(doc.step);
-          }
-          if(doc.currentValue !== null && doc.currentValue !== undefined){
-            slider.value = String(doc.currentValue);
-          }
-          number = document.createElement('input');
-          number.type = 'number';
-          number.className = 'settingsSearchResultNumber';
-          if(Number.isFinite(doc.min)) number.min = String(doc.min);
-          if(Number.isFinite(doc.max)) number.max = String(doc.max);
-          if(Number.isFinite(doc.step) && doc.step > 0) number.step = String(doc.step);
-          if(doc.currentValue !== null && doc.currentValue !== undefined){
-            number.value = String(doc.currentValue);
-          }
-          slider.addEventListener('input', ()=>{
-            number.value = slider.value;
-            setControlValue(doc.control, slider.value, 'number');
-            doc.currentValue = getControlValue(doc.control, 'number');
-            valueLabel.textContent = formatSettingValue(doc, doc.currentValue);
-          });
-          slider.addEventListener('change', ()=>{
-            setControlValue(doc.control, slider.value, 'number', { commit: true });
-            doc.currentValue = getControlValue(doc.control, 'number');
-            markSettingUsed(doc);
-            valueLabel.textContent = formatSettingValue(doc, doc.currentValue);
-          });
-          number.addEventListener('change', ()=>{
-            const numeric = clampNumericForControl(doc.control, number.value);
-            slider.value = String(numeric);
-            number.value = String(numeric);
-            setControlValue(doc.control, numeric, 'number', { commit: true });
-            doc.currentValue = getControlValue(doc.control, 'number');
-            markSettingUsed(doc);
-            valueLabel.textContent = formatSettingValue(doc, doc.currentValue);
-          });
-          action.appendChild(slider);
-          action.appendChild(number);
-        } else if(doc.valueTypeNormalized === 'boolean'){
-          const toggleBtn = document.createElement('button');
-          toggleBtn.type = 'button';
-          toggleBtn.className = 'settingsSearchResultToggle';
-          const setLabel = ()=>{
-            const current = getControlValue(doc.control, 'boolean');
-            toggleBtn.textContent = current ? 'Turn off' : 'Turn on';
-          };
-          setLabel();
-          toggleBtn.addEventListener('click', ()=>{
-            setControlValue(doc.control, null, 'boolean', { commit: true });
-            doc.currentValue = getControlValue(doc.control, 'boolean');
-            markSettingUsed(doc);
-            setLabel();
-            valueLabel.textContent = formatSettingValue(doc, doc.currentValue);
-          });
-          action.appendChild(toggleBtn);
-        } else {
-          const openBtn = document.createElement('button');
-          openBtn.type = 'button';
-          openBtn.className = 'settingsSearchResultToggle';
-          openBtn.textContent = 'Open';
-          openBtn.addEventListener('click', ()=>{
-            activateSettingsSearchResultByDocId(doc.id, { toggle: false });
-          });
-          action.appendChild(openBtn);
-        }
-        option.appendChild(main);
-        option.appendChild(action);
-        option.addEventListener('mouseenter', ()=>{
-          const idx = settingsSearchState.results.findIndex(entry => entry.doc.id === doc.id);
-          if(idx >= 0){
-            setSettingsSearchActive(idx);
-          }
-        });
-        option.addEventListener('click', (ev)=>{
-          ev.preventDefault();
-          const idx = settingsSearchState.results.findIndex(entry => entry.doc.id === doc.id);
-          if(idx >= 0){
-            activateSettingsSearchResult(idx, { toggle: ev.altKey });
-          }
-        });
-        settingsSearchState.resultElements.set(doc.id, { element: option, slider, number, valueLabel });
-        listFragment.appendChild(option);
-      });
-      settingsSearchResultsEl.appendChild(listFragment);
-      setSettingsSearchActive(0);
-    } else {
-      settingsSearchResultsEl.setAttribute('hidden', 'true');
-      settingsSearchEmptyEl.hidden = false;
-      settingsSearchEmptyPrimary.textContent = 'No settings found.';
-      settingsSearchEmptySecondary.innerHTML = '';
-      if(payload.didYouMean){
-        const span = document.createElement('span');
-        span.textContent = 'Did you mean';
-        const suggestion = document.createElement('button');
-        suggestion.type = 'button';
-        suggestion.className = 'settingsSearchResultToggle';
-        suggestion.textContent = payload.didYouMean;
-        suggestion.addEventListener('click', ()=>{
-          if(settingsSearchInput){
-            settingsSearchInput.value = payload.didYouMean;
-            scheduleSettingsSearch(payload.didYouMean);
-            settingsSearchInput.focus();
-          }
-        });
-        settingsSearchEmptySecondary.appendChild(span);
-        settingsSearchEmptySecondary.appendChild(document.createTextNode(' '));
-        settingsSearchEmptySecondary.appendChild(suggestion);
-        settingsSearchEmptySecondary.appendChild(document.createTextNode('?'));
-      } else {
-        settingsSearchEmptySecondary.textContent = 'Try a different keyword or add a filter such as tag:camera.';
-      }
-    }
-    const summary = payload.total ? `${Math.min(payload.results.length, payload.total)} of ${payload.total} results` : '0 results';
-    const timing = Number.isFinite(payload.elapsedMs) ? ` Â· ${Math.max(0, Math.round(payload.elapsedMs)).toLocaleString()}ms` : '';
-    settingsSearchStatusEl.textContent = `${summary}${timing}`;
-    settingsSearchState.lastRenderQuery = payload.raw || (settingsSearchInput ? settingsSearchInput.value : '');
-    renderSettingsFacets(payload.facets);
-    renderSettingsRecents();
-  }
-
-  function applyFacetFilter(kind, value){
-    if(!settingsSearchInput){
-      return;
-    }
-    let filter = '';
-    if(kind === 'tag'){ filter = `tag:${value}`; }
-    else if(kind === 'type'){ filter = `type:${value}`; }
-    else if(kind === 'scope'){ filter = `scope:${value}`; }
-    if(!filter){
-      return;
-    }
-    const base = settingsSearchInput.value.trim();
-    const next = base ? `${base} ${filter}` : filter;
-    settingsSearchInput.value = next;
-    scheduleSettingsSearch(next);
-    settingsSearchInput.focus();
-  }
-
-  function setSettingsSearchActive(index){
-    if(!settingsSearchState.results.length){
-      settingsSearchState.activeIndex = -1;
-      if(settingsSearchInput){
-        settingsSearchInput.setAttribute('aria-activedescendant', '');
-      }
-      return;
-    }
-    const clamped = Math.max(0, Math.min(settingsSearchState.results.length - 1, index));
-    settingsSearchState.activeIndex = clamped;
-    settingsSearchState.results.forEach((hit, idx)=>{
-      const entry = settingsSearchState.resultElements.get(hit.doc.id);
-      if(entry && entry.element){
-        if(idx === clamped){
-          entry.element.setAttribute('aria-selected', 'true');
-          if(settingsSearchInput){
-            settingsSearchInput.setAttribute('aria-activedescendant', entry.element.id);
-          }
-          entry.element.scrollIntoView({ block: 'nearest' });
-        } else {
-          entry.element.setAttribute('aria-selected', 'false');
-        }
-      }
-    });
-  }
-
-  function moveSettingsSearchActive(delta){
-    if(!settingsSearchState.results.length){
-      return;
-    }
-    const nextIndex = settingsSearchState.activeIndex + delta;
-    if(nextIndex < 0){
-      setSettingsSearchActive(settingsSearchState.results.length - 1);
-    } else if(nextIndex >= settingsSearchState.results.length){
-      setSettingsSearchActive(0);
-    } else {
-      setSettingsSearchActive(nextIndex);
-    }
-  }
-
-  function activateSettingsSearchResultByDocId(docId, { toggle = false } = {}){
-    const index = settingsSearchState.results.findIndex(hit => hit.doc.id === docId);
-    if(index >= 0){
-      activateSettingsSearchResult(index, { toggle });
-    }
-  }
-
-  function activateSettingsSearchResult(index, { toggle = false } = {}){
-    if(index < 0 || index >= settingsSearchState.results.length){
-      return;
-    }
-    const hit = settingsSearchState.results[index];
-    ensureRecentQueriesContains(settingsSearchInput ? settingsSearchInput.value : '');
-    renderSettingsRecents();
-    openSettingFromSearch(hit, { toggle });
-  }
-
-  function openSettingFromSearch(hit, { toggle = false } = {}){
-    if(!hit || !hit.doc){
-      return;
-    }
-    const doc = hit.doc;
-    if(toggle && doc.valueTypeNormalized === 'boolean'){
-      setControlValue(doc.control, null, 'boolean', { commit: true });
-      doc.currentValue = getControlValue(doc.control, 'boolean');
-      markSettingUsed(doc);
-      updateSearchResultValue(doc);
-      return;
-    }
-    setMenuState('expanded');
-    const pane = doc.element ? doc.element.closest('.submenu') : null;
-    if(pane){
-      pane.classList.add('open');
-      const trigger = pane.previousElementSibling;
-      if(trigger && trigger.classList && trigger.classList.contains('btn')){
-        trigger.setAttribute('aria-expanded', 'true');
-      }
-    }
-    if(doc.element && typeof doc.element.scrollIntoView === 'function'){
-      doc.element.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }
-    if(doc.control && typeof doc.control.focus === 'function'){
-      doc.control.focus({ preventScroll: true });
-    }
-    markSettingUsed(doc);
-    const help = deriveSettingHelp(doc.element) || deriveSettingHelp(doc.control);
-    if(help){
-      showSettingHelp(help.title, help.text);
-    }
-    closeSettingsSearch({ restoreFocus: false });
-  }
-
-  function closeSettingsSearch({ restoreFocus = true } = {}){
-    if(!settingsSearchOverlay){
-      return;
-    }
-    if(settingsSearchDebounceHandle){
-      clearTimeout(settingsSearchDebounceHandle);
-      settingsSearchDebounceHandle = null;
-    }
-    settingsSearchOverlay.setAttribute('data-open', 'false');
-    settingsSearchOverlay.setAttribute('aria-hidden', 'true');
-    settingsSearchState.open = false;
-    settingsSearchState.activeIndex = -1;
-    settingsSearchState.resultElements.clear();
-    if(settingsSearchInput){
-      settingsSearchInput.setAttribute('aria-expanded', 'false');
-      settingsSearchInput.setAttribute('aria-activedescendant', '');
-    }
-    toggleSettingsSearchHelp(false);
-    if(restoreFocus && settingsSearchPreviousFocus && typeof settingsSearchPreviousFocus.focus === 'function'){
-      settingsSearchPreviousFocus.focus();
-    }
-    settingsSearchPreviousFocus = null;
-  }
-
-  function openSettingsSearch({ query = '', focus = true } = {}){
-    if(!settingsSearchOverlay || !settingsSearchInput){
-      return;
-    }
-    rebuildSettingsSearchIndex();
-    settingsSearchPreviousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    settingsSearchOverlay.setAttribute('data-open', 'true');
-    settingsSearchOverlay.setAttribute('aria-hidden', 'false');
-    settingsSearchState.open = true;
-    if(query !== undefined && query !== null){
-      settingsSearchInput.value = query;
-    }
-    if(focus){
-      settingsSearchInput.focus();
-      settingsSearchInput.select();
-    }
-    scheduleSettingsSearch(settingsSearchInput.value);
-  }
-
-  function toggleSettingsSearchHelp(force){
-    if(!settingsSearchHelpEl || !settingsSearchHelpBtn){
-      return;
-    }
-    const shouldShow = typeof force === 'boolean' ? force : settingsSearchHelpEl.hasAttribute('hidden');
-    if(shouldShow){
-      settingsSearchHelpEl.removeAttribute('hidden');
-      settingsSearchHelpBtn.setAttribute('aria-expanded', 'true');
-    } else {
-      settingsSearchHelpEl.setAttribute('hidden', 'true');
-      settingsSearchHelpBtn.setAttribute('aria-expanded', 'false');
-    }
-  }
-
-  function scheduleSettingsSearch(query){
-    if(settingsSearchDebounceHandle){
-      clearTimeout(settingsSearchDebounceHandle);
-    }
-    const requestId = ++settingsSearchState.requestId;
-    settingsSearchDebounceHandle = setTimeout(()=>{
-      const payload = searchSettings(query || '', { limit: SETTINGS_SEARCH_RESULT_LIMIT });
-      if(requestId === settingsSearchState.requestId){
-        renderSettingsSearchResults(payload);
-      }
-    }, SETTINGS_SEARCH_DEBOUNCE_MS);
-  }
-
-  function handleSettingsSearchInput(){
-    if(!settingsSearchInput){
-      return;
-    }
-    scheduleSettingsSearch(settingsSearchInput.value);
-  }
-
-  function handleSettingsSearchInputKeydown(ev){
-    if(ev.key === 'ArrowDown'){
-      ev.preventDefault();
-      moveSettingsSearchActive(1);
-      return;
-    }
-    if(ev.key === 'ArrowUp'){
-      ev.preventDefault();
-      moveSettingsSearchActive(-1);
-      return;
-    }
-    if(ev.key === 'Enter'){
-      ev.preventDefault();
-      if(settingsSearchState.activeIndex >= 0){
-        activateSettingsSearchResult(settingsSearchState.activeIndex, { toggle: ev.altKey });
-      } else if(settingsSearchState.results.length){
-        activateSettingsSearchResult(0, { toggle: ev.altKey });
-      }
-      return;
-    }
-    if(ev.key === 'Escape'){
-      ev.preventDefault();
-      closeSettingsSearch();
-      return;
-    }
-    if(ev.key === '?' && ev.shiftKey){
-      ev.preventDefault();
-      toggleSettingsSearchHelp();
-      return;
-    }
-  }
-
-  function handleGlobalSettingsSearchKeydown(ev){
-    const key = ev.key ? ev.key.toLowerCase() : '';
-    const meta = ev.metaKey || ev.ctrlKey;
-    const target = ev.target;
-    const isEditable = target && target instanceof HTMLElement && (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
-    if(meta && key === 'k'){
-      ev.preventDefault();
-      if(settingsSearchState.open){
-        closeSettingsSearch();
-      } else {
-        openSettingsSearch({ query: settingsSearchInput ? settingsSearchInput.value : '', focus: true });
-      }
-      return;
-    }
-    if(settingsSearchState.open && key === 'escape'){
-      ev.preventDefault();
-      closeSettingsSearch();
-      return;
-    }
-    if(!settingsSearchState.open && !meta && !isEditable && ev.key === '?' && ev.shiftKey){
-      ev.preventDefault();
-      openSettingsSearch({ query: '', focus: true });
-      toggleSettingsSearchHelp(true);
-    }
-  }
-
-  function initializeSettingsSearch(){
-    if(!settingsSearchOverlay || !settingsSearchInput){
-      return;
-    }
-    rebuildSettingsSearchIndex();
-    document.addEventListener('keydown', handleGlobalSettingsSearchKeydown);
-    settingsSearchOverlay.addEventListener('click', (ev)=>{
-      if(ev.target === settingsSearchOverlay){
-        closeSettingsSearch();
-      }
-    });
-    settingsSearchInput.addEventListener('input', handleSettingsSearchInput);
-    settingsSearchInput.addEventListener('keydown', handleSettingsSearchInputKeydown);
-    if(settingsSearchHelpBtn){
-      settingsSearchHelpBtn.addEventListener('click', ()=> toggleSettingsSearchHelp());
-    }
-    if(settingsSearchHelpClose){
-      settingsSearchHelpClose.addEventListener('click', ()=> toggleSettingsSearchHelp(false));
-    }
-    if(settingsSearchAskBtn){
-      settingsSearchAskBtn.addEventListener('click', ()=> toggleSettingsSearchHelp(true));
-    }
-  }
-
-
   function initializeCameraControls(){
     setCameraMode(camera.mode, { syncInput: true, silent: true });
     setCameraFollowLag(cameraFollowLagMs);
@@ -16435,7 +14786,8 @@ import { createEventBus } from './core/events.js';
   cameraState.viewportReady = true;
   syncMenuMeasurements();
   initializeSettingHelp();
-  initializeSettingsSearch();
+  settingsSearch.initializeSettingsSearch();
+  updatePerfPanel();
   scheduleHudFit();
 
   // Timer
@@ -17207,7 +15559,10 @@ import { createEventBus } from './core/events.js';
       const a = raw[idx+3];
       arr[i] = (a>0 && r===0 && g===0 && b===0) ? 1 : 0;
     }
+    const coarse = buildCoarseBlocks(arr, width, height, NAV_COARSE_CELL);
     GameState.map.hitbox.data = arr;
+    GameState.map.hitbox.coarse = coarse;
+    GameState.map.hitbox.grid = buildNavGrid(coarse, width, height, NAV_COARSE_CELL);
     GameState.map.hitbox.loaded = true;
     clearAllNavigation();
     if(hitboxName){ hitboxName.textContent = GameState.map.hitbox.displayName || hitboxName.textContent || 'Hitbox map loaded'; }
@@ -17267,180 +15622,35 @@ import { createEventBus } from './core/events.js';
     const r=new FileReader(); r.onload=()=>useArtImage(r.result,f.name); r.readAsDataURL(f);
   });
 
-  function hitboxPixelsReady(){ return !!(GameState.map.hitbox.loaded && GameState.map.hitbox.data && GameState.map.hitbox.data.length); }
-  function hitboxActive(){ return hitboxPixelsReady() || customColliders.length > 0; }
-  function circleCollides(x, y, radius){
-    if(customColliders.length && collidersBlockCircle(x, y, radius)){
-      return true;
-    }
-    if(!hitboxPixelsReady()) return false;
-    if(radius <= 0){
-      const px = Math.floor(x);
-      const py = Math.floor(y);
-      if(px < 0 || py < 0 || px >= GameState.map.hitbox.width || py >= GameState.map.hitbox.height) return true;
-      return !!GameState.map.hitbox.data[py * GameState.map.hitbox.width + px];
-    }
-    const minX = Math.max(0, Math.floor(x - radius));
-    const maxX = Math.min(GameState.map.hitbox.width - 1, Math.ceil(x + radius));
-    const minY = Math.max(0, Math.floor(y - radius));
-    const maxY = Math.min(GameState.map.hitbox.height - 1, Math.ceil(y + radius));
-    const rSq = radius * radius;
-    for(let py=minY; py<=maxY; py++){
-      const rowIndex = py * GameState.map.hitbox.width;
-      for(let px=minX; px<=maxX; px++){
-        if(GameState.map.hitbox.data[rowIndex + px]){
-          const dx = (px + 0.5) - x;
-          const dy = (py + 0.5) - y;
-          if(dx*dx + dy*dy <= rSq) return true;
-        }
-      }
-    }
-    return false;
-  }
-  function collidersBlockCircle(x, y, radius){
-    const r = Math.max(0, Number(radius) || 0);
-    for(let i=0;i<customColliders.length;i++){
-      const collider = customColliders[i];
-      if(!collider) continue;
-      if(colliderBlocksCircle(collider, x, y, r)){
-        return true;
-      }
-    }
-    return false;
-  }
-  function colliderBlocksCircle(collider, x, y, radius){
-    if(!collider) return false;
-    const type = collider.type === 'capsule' ? 'capsule'
-      : (collider.type === 'crescent' ? 'crescent' : 'circle');
-    const cx = Number(collider.x) || 0;
-    const cy = Number(collider.y) || 0;
-    if(type === 'circle'){
-      const rad = Math.max(0, Number(collider.radius) || 0);
-      const dx = x - cx;
-      const dy = y - cy;
-      return Math.hypot(dx, dy) <= rad + radius;
-    }
-    if(type === 'crescent'){
-      const metrics = ensureCrescentMetrics(collider);
-      const distOuter = Math.hypot(x - metrics.cx, y - metrics.cy);
-      if(distOuter > metrics.radius + radius) return false;
-      if(metrics.innerRadius <= 0) return true;
-      const distInner = Math.hypot(x - metrics.innerCx, y - metrics.innerCy);
-      return distInner + radius > metrics.innerRadius;
-    }
-    return circleIntersectsCapsule(x, y, radius, collider);
-  }
-  function ensureCapsuleMetrics(collider){
-    const radius = clampSettingValue(Number(collider && collider.radius), SETTINGS_RANGE_MIN);
-    const rawLength = Number(collider && collider.length);
-    const fallbackLength = radius * 2;
-    const totalLength = Number.isFinite(rawLength)
-      ? clampSettingValue(rawLength, fallbackLength)
-      : clampSettingValue(fallbackLength);
-    const span = Math.max(0, totalLength - radius * 2);
-    const halfSpan = span / 2;
-    const angle = Number.isFinite(collider.angle) ? collider.angle : 0;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    const ax = collider.x - cos * halfSpan;
-    const ay = collider.y - sin * halfSpan;
-    const bx = collider.x + cos * halfSpan;
-    const by = collider.y + sin * halfSpan;
-    const reach = halfSpan + radius;
-    return { radius, totalLength, span, halfSpan, angle, ax, ay, bx, by, reach };
-  }
-  function ensureCrescentMetrics(collider){
-    const cx = Number(collider && collider.x) || 0;
-    const cy = Number(collider && collider.y) || 0;
-    const radius = clampSettingValue(Number(collider && collider.radius), SETTINGS_RANGE_MIN);
-    const rawInner = collider ? Number(collider.innerRadius) : NaN;
-    let innerRadius = Number.isFinite(rawInner)
-      ? clampSettingValue(rawInner, radius * 0.6)
-      : clampSettingValue(radius * 0.6);
-    innerRadius = Math.min(radius, innerRadius);
-    const rawOffset = collider ? Number(collider.offset) : NaN;
-    const fallbackOffset = radius > 0 ? (radius + innerRadius) / 2 : SETTINGS_RANGE_MIN;
-    let offset = Number.isFinite(rawOffset)
-      ? clampSettingValue(rawOffset, fallbackOffset)
-      : clampSettingValue(fallbackOffset);
-    const maxOffset = radius + innerRadius;
-    offset = Math.min(maxOffset, Math.max(SETTINGS_RANGE_MIN, offset));
-    const angle = Number.isFinite(collider && collider.angle) ? collider.angle : 0;
-    if(collider){
-      collider.radius = radius;
-      collider.innerRadius = innerRadius;
-      collider.offset = offset;
-      collider.angle = angle;
-    }
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    const innerCx = cx + cos * offset;
-    const innerCy = cy + sin * offset;
-    return { cx, cy, radius, innerRadius, offset, angle, innerCx, innerCy };
-  }
-  function distancePointToSegment(px, py, ax, ay, bx, by){
-    const vx = bx - ax;
-    const vy = by - ay;
-    const lenSq = vx*vx + vy*vy;
-    if(lenSq <= 1e-9){
-      return Math.hypot(px - ax, py - ay);
-    }
-    const t = ((px - ax) * vx + (py - ay) * vy) / lenSq;
-    const clamped = Math.max(0, Math.min(1, t));
-    const closestX = ax + vx * clamped;
-    const closestY = ay + vy * clamped;
-    return Math.hypot(px - closestX, py - closestY);
-  }
-  function circleIntersectsCapsule(x, y, radius, collider){
-    const metrics = ensureCapsuleMetrics(collider);
-    if(metrics.span <= 0){
-      return Math.hypot(x - collider.x, y - collider.y) <= metrics.radius + radius;
-    }
-    const dist = distancePointToSegment(x, y, metrics.ax, metrics.ay, metrics.bx, metrics.by);
-    return dist <= metrics.radius + radius;
-  }
-  function stepAlongAxis(start, delta, fixedCoord, radius, isX){
-    let lo = 0;
-    let hi = 1;
-    let best = 0;
-    for(let i=0;i<5;i++){
-      const mid = (lo + hi) / 2;
-      const candidate = start + delta * mid;
-      const cx = isX ? candidate : fixedCoord;
-      const cy = isX ? fixedCoord : candidate;
-      if(circleCollides(cx, cy, radius)) hi = mid;
-      else { best = mid; lo = mid; }
-    }
-    return start + delta * best;
-  }
-  function moveCircleWithCollision(x, y, moveX, moveY, radius){
-    const targetX = x + moveX;
-    const targetY = y + moveY;
-    if(!hitboxActive()) return {x: targetX, y: targetY};
-    if(!circleCollides(targetX, targetY, radius)) return {x: targetX, y: targetY};
-    let newX = x;
-    let newY = y;
-    if(moveX !== 0){
-      const candidateX = x + moveX;
-      if(!circleCollides(candidateX, y, radius)) newX = candidateX;
-      else newX = stepAlongAxis(x, moveX, y, radius, true);
-    }
-    if(moveY !== 0){
-      const candidateY = y + moveY;
-      if(!circleCollides(newX, candidateY, radius)) newY = candidateY;
-      else newY = stepAlongAxis(y, moveY, newX, radius, false);
-    }
-    if(circleCollides(newX, newY, radius)) return {x, y};
-    return {x: newX, y: newY};
-  }
-
-  // === Navigation helpers (grid-based A*) ===
-  const NAV_CELL_SIZE = 14;
-  const NAV_LINE_STEP = NAV_CELL_SIZE * 0.5;
-
-  function navGoalKey(goal, radius){
-    return goal ? `${goal.x.toFixed(1)}|${goal.y.toFixed(1)}|${radius.toFixed(1)}` : '';
-  }
+  const collisionHelpers = createCollisionHelpers({
+    GameState,
+    mapState,
+    customColliders,
+    clampSettingValue,
+    SETTINGS_RANGE_MIN,
+    perfCounters
+  });
+  const {
+    hitboxPixelsReady,
+    hitboxActive,
+    circleCollides,
+    collidersBlockCircle,
+    colliderBlocksCircle,
+    ensureCapsuleMetrics,
+    ensureCrescentMetrics,
+    distancePointToSegment,
+    circleIntersectsCapsule,
+    moveCircleWithCollision,
+    navGoalKey,
+    pointToCell,
+    cellCenter,
+    isCellWalkable,
+    findNearestWalkableCell,
+    lineOfSight,
+    simplifyPath,
+    findPath,
+    NAV_CELL_SIZE
+  } = collisionHelpers;
 
   function clearEntityNav(entity){ if(entity && entity.nav){ entity.nav = null; } }
 
@@ -17448,177 +15658,6 @@ import { createEventBus } from './core/events.js';
     player.nav = null;
     if(resetPlayerGoal){ player.navGoal = null; }
     for(const m of minions){ if(m.nav) m.nav = null; }
-  }
-
-  function pointToCell(x, y){
-    const cx = Math.max(0, Math.min(Math.floor(x / NAV_CELL_SIZE), Math.ceil(mapState.width / NAV_CELL_SIZE) - 1));
-    const cy = Math.max(0, Math.min(Math.floor(y / NAV_CELL_SIZE), Math.ceil(mapState.height / NAV_CELL_SIZE) - 1));
-    return {cx, cy};
-  }
-
-  function cellCenter(cx, cy){
-    const x = Math.max(0, Math.min(mapState.width - 1, (cx + 0.5) * NAV_CELL_SIZE));
-    const y = Math.max(0, Math.min(mapState.height - 1, (cy + 0.5) * NAV_CELL_SIZE));
-    return {x, y};
-  }
-
-  function isCellWalkable(cx, cy, cols, rows, radius){
-    if(cx < 0 || cy < 0 || cx >= cols || cy >= rows) return false;
-    const {x, y} = cellCenter(cx, cy);
-    return !circleCollides(x, y, radius);
-  }
-
-  function findNearestWalkableCell(cx, cy, cols, rows, radius){
-    const startCx = Math.max(0, Math.min(cols - 1, cx));
-    const startCy = Math.max(0, Math.min(rows - 1, cy));
-    if(isCellWalkable(startCx, startCy, cols, rows, radius)){
-      return {cx: startCx, cy: startCy, adjusted: false};
-    }
-    const visited = new Uint8Array(cols * rows);
-    const queue = [{cx: startCx, cy: startCy, dist: 0}];
-    const neighborSteps = [
-      [-1,  0], [1, 0], [0, -1], [0, 1],
-      [-1, -1], [1, -1], [-1, 1], [1, 1]
-    ];
-    let head = 0;
-    visited[startCy * cols + startCx] = 1;
-    const MAX_SEARCH = 42;
-    while(head < queue.length){
-      const {cx: qx, cy: qy, dist} = queue[head++];
-      if(dist >= MAX_SEARCH) continue;
-      for(const [dx, dy] of neighborSteps){
-        const nx = qx + dx;
-        const ny = qy + dy;
-        if(nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
-        const idx = ny * cols + nx;
-        if(visited[idx]) continue;
-        visited[idx] = 1;
-        if(isCellWalkable(nx, ny, cols, rows, radius)){
-          return {cx: nx, cy: ny, adjusted: true};
-        }
-        queue.push({cx: nx, cy: ny, dist: dist + 1});
-      }
-    }
-    return null;
-  }
-
-  function lineOfSight(ax, ay, bx, by, radius){
-    const dist = Math.hypot(bx - ax, by - ay);
-    if(dist === 0) return !circleCollides(ax, ay, radius);
-    const steps = Math.max(1, Math.ceil(dist / Math.max(4, NAV_LINE_STEP)));
-    for(let i=1;i<steps;i++){
-      const t = i / steps;
-      const x = ax + (bx - ax) * t;
-      const y = ay + (by - ay) * t;
-      if(circleCollides(x, y, radius)) return false;
-    }
-    return !circleCollides(bx, by, radius);
-  }
-
-  function simplifyPath(points, radius){
-    if(points.length <= 2) return points.slice();
-    const result = [points[0]];
-    for(let i=2;i<points.length;i++){
-      const anchor = result[result.length - 1];
-      const candidate = points[i];
-      if(!lineOfSight(anchor.x, anchor.y, candidate.x, candidate.y, radius)){
-        result.push(points[i-1]);
-      }
-    }
-    result.push(points[points.length - 1]);
-    return result;
-  }
-
-  function findPath(start, goal, radius){
-    if(!hitboxActive()) return null;
-    const cols = Math.ceil(mapState.width / NAV_CELL_SIZE);
-    const rows = Math.ceil(mapState.height / NAV_CELL_SIZE);
-    let startCell = pointToCell(start.x, start.y);
-    let goalCell = pointToCell(goal.x, goal.y);
-    const startInfo = findNearestWalkableCell(startCell.cx, startCell.cy, cols, rows, radius);
-    if(!startInfo) return null;
-    startCell = {cx: startInfo.cx, cy: startInfo.cy};
-    const goalInfo = findNearestWalkableCell(goalCell.cx, goalCell.cy, cols, rows, radius);
-    if(!goalInfo) return null;
-    goalCell = {cx: goalInfo.cx, cy: goalInfo.cy};
-    const goalPoint = goalInfo.adjusted ? cellCenter(goalCell.cx, goalCell.cy) : {x: goal.x, y: goal.y};
-
-    const total = cols * rows;
-    const gScore = new Array(total).fill(Infinity);
-    const fScore = new Array(total).fill(Infinity);
-    const came = new Int32Array(total);
-    came.fill(-1);
-    const closed = new Uint8Array(total);
-
-    function indexOf(cx, cy){ return cy * cols + cx; }
-    function coordsOf(index){ return { cx: index % cols, cy: Math.floor(index / cols) }; }
-
-    const startIdx = indexOf(startCell.cx, startCell.cy);
-    const goalIdx = indexOf(goalCell.cx, goalCell.cy);
-    const open = [startIdx];
-    gScore[startIdx] = 0;
-    fScore[startIdx] = Math.hypot(goalCell.cx - startCell.cx, goalCell.cy - startCell.cy);
-
-    const neighborOffsets = [
-      [-1,  0, 1], [1, 0, 1], [0, -1, 1], [0, 1, 1],
-      [-1, -1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [1, 1, Math.SQRT2]
-    ];
-
-    while(open.length){
-      let bestIndex = 0;
-      for(let i=1;i<open.length;i++){
-        if(fScore[open[i]] < fScore[open[bestIndex]]) bestIndex = i;
-      }
-      const current = open.splice(bestIndex, 1)[0];
-      if(current === goalIdx) break;
-      if(closed[current]) continue;
-      closed[current] = 1;
-      const {cx, cy} = coordsOf(current);
-
-      for(const [dx, dy, cost] of neighborOffsets){
-        const nx = cx + dx;
-        const ny = cy + dy;
-        if(!isCellWalkable(nx, ny, cols, rows, radius)) continue;
-        if(dx !== 0 && dy !== 0){
-          if(!isCellWalkable(cx + dx, cy, cols, rows, radius)) continue;
-          if(!isCellWalkable(cx, cy + dy, cols, rows, radius)) continue;
-        }
-        const neighborIdx = indexOf(nx, ny);
-        if(closed[neighborIdx]) continue;
-        const tentative = gScore[current] + cost;
-        if(tentative < gScore[neighborIdx]){
-          gScore[neighborIdx] = tentative;
-          const heuristic = Math.hypot(goalCell.cx - nx, goalCell.cy - ny);
-          fScore[neighborIdx] = tentative + heuristic;
-          came[neighborIdx] = current;
-          if(!open.includes(neighborIdx)) open.push(neighborIdx);
-        }
-      }
-    }
-
-    if(came[goalIdx] === -1 && goalIdx !== startIdx) return null;
-    const cells = [];
-    let cur = goalIdx;
-    while(cur !== -1 && cur !== startIdx){
-      cells.push(cur);
-      cur = came[cur];
-    }
-    cells.reverse();
-
-    const rawPoints = [{x: start.x, y: start.y}];
-    if(startInfo.adjusted){
-      rawPoints.push(cellCenter(startCell.cx, startCell.cy));
-    }
-    for(const idx of cells){
-      const {cx, cy} = coordsOf(idx);
-      rawPoints.push(cellCenter(cx, cy));
-    }
-    rawPoints.push(goalPoint);
-
-    const simplified = simplifyPath(rawPoints, radius);
-    if(simplified.length <= 1) return [goalPoint];
-    simplified.shift();
-    return simplified;
   }
 
   function ensureNavForEntity(entity, goal, radius){
@@ -17630,11 +15669,15 @@ import { createEventBus } from './core/events.js';
     }
     const key = navGoalKey(goal, radius);
     if(!entity.nav || entity.nav.key !== key){
+      if(pathfindBudget <= 0){
+        return null;
+      }
       const path = findPath({x: entity.x, y: entity.y}, goal, radius);
       if(!path || !path.length){
         entity.nav = null;
         return null;
       }
+      pathfindBudget -= 1;
       entity.nav = { key, points: path, index: 0 };
     }
     const tol = Math.max(radius * 0.6, NAV_CELL_SIZE * 0.4);
@@ -17685,10 +15728,7 @@ import { createEventBus } from './core/events.js';
   }
   btnSpawnBlue.addEventListener('click', ()=> prepareSpawnPlacement('blue'));
   btnSpawnRed.addEventListener('click', ()=> prepareSpawnPlacement('red'));
-
   // Collision editor
-  function degToRad(deg){ return (Number(deg) || 0) * Math.PI / 180; }
-  function radToDeg(rad){ return (Number(rad) || 0) * 180 / Math.PI; }
   function getColliderByIdValue(id){
     if(!Number.isFinite(id)) return null;
     for(const collider of customColliders){
@@ -19320,28 +17360,6 @@ import { createEventBus } from './core/events.js';
       gameStateImportInput.value = '';
     });
   }
-
-  // Config inputs
-  function clamp(v,min,max){ return Math.max(min, Math.min(max, v|0)); }
-  function clamp01(v){ return Math.max(0, Math.min(1, v)); }
-  function smoothstep01(t){ t = clamp01(t); return t * t * (3 - 2 * t); }
-  function clampFloat(v,min,max){
-    let n = parseFloat(v);
-    if(!Number.isFinite(n)) n = min;
-    return Math.max(min, Math.min(max, n));
-  }
-  function sanitizeHexColor(value, fallback = '#7fe3ff'){
-    if(typeof value !== 'string') return fallback;
-    const hex = value.trim();
-    if(/^#([0-9a-fA-F]{6})$/.test(hex)){
-      return `#${hex.slice(1).toLowerCase()}`;
-    }
-    if(/^#([0-9a-fA-F]{3})$/.test(hex)){
-      const digits = hex.slice(1).toLowerCase();
-      return `#${digits.split('').map((c)=> c + c).join('')}`;
-    }
-    return fallback;
-  }
   setCursorEmoji(cursorState.emoji, { syncInput: true });
   setCursorHoverColor(cursorState.hoverColor, { syncInput: true });
   setCursorEnabled(cursorState.enabled, { syncInput: false });
@@ -20201,342 +18219,43 @@ import { createEventBus } from './core/events.js';
     }
   });
 
-  // Paths
-  function getPath(side){
-    const s = side==='blue' ? blueSpawns : redSpawns;
-    const e = side==='blue' ? redSpawns : blueSpawns; // opponent spawn acts as endpoint (portal)
-    if(s.length && e.length) return {from:s[0], to:e[0]};
-    return null;
-  }
+  const spawnSystem = createSpawnSystem({
+    blueSpawns,
+    redSpawns,
+    pendingSpawns,
+    waveState,
+    portalState,
+    fanSlotOffset,
+    laneFanSpacing,
+    lanePointAtDistance,
+    updateMinionLaneFrame,
+    minions,
+    minionDiameter,
+    minionRadius,
+    mapState,
+    defaultSpawnPosition,
+    clampSettingValue
+  });
+  const {
+    getPath,
+    statsForWave,
+    enqueueMinionSpawn,
+    spawnFromQueue,
+    distributeMinions,
+    spawnWave,
+    blendAngles
+  } = spawnSystem;
 
-  function statsForWave(w){
-    // Linear scaling: base Ãƒâ€” (1 + portalState.scalePct% Ãƒâ€” (w-1))
-    const mult = 1 + (portalState.scalePct/100) * Math.max(0, w-1);
-    const hp = Math.max(1, Math.round(portalState.baseMinionHP * mult));
-    const dmg = Math.max(1, Math.round(portalState.baseMinionDMG * mult));
-    return {hp, dmg};
-  }
-
-  function enqueueMinionSpawn(side, path, hp, dmg, spawnAt, slotIndex = 0, laneIndex = 0){
-    const job = {
-      side,
-      at: spawnAt,
-      from: { x: path && path.from ? path.from.x : 0, y: path && path.from ? path.from.y : 0 },
-      to: { x: path && path.to ? path.to.x : 0, y: path && path.to ? path.to.y : 0 },
-      hp,
-      dmg,
-      slotIndex,
-      laneIndex,
-      laneLabel: path && path.label ? path.label : String((laneIndex || 0) + 1),
-      path: path || null
-    };
-
-    const insertAt = pendingSpawns.findIndex(existing => job.at < existing.at);
-    if(insertAt === -1){ pendingSpawns.push(job); }
-    else { pendingSpawns.splice(insertAt, 0, job); }
-  }
-
-  function blendAngles(from, to, weight){
-    const t = Math.max(0, Math.min(1, weight));
-    const diff = Math.atan2(Math.sin(to - from), Math.cos(to - from));
-    return from + diff * t;
-  }
-
-  function spawnFromQueue(job){
-    const lanePath = job.path || null;
-    const slotIndex = job.slotIndex || 0;
-    const fanOffset = fanSlotOffset(slotIndex) * laneFanSpacing;
-
-    if(lanePath){
-      const laneLen = lanePath.totalLength || Math.hypot(job.to.x - job.from.x, job.to.y - job.from.y) || 1;
-      const midSample = lanePointAtDistance(lanePath, laneLen * 0.5);
-      const firstSegment = lanePath.segments && lanePath.segments[0] ? lanePath.segments[0] : null;
-      const laneDir = firstSegment ? { x: firstSegment.dirX, y: firstSegment.dirY }
-        : (()=>{
-            const dx = job.to.x - job.from.x;
-            const dy = job.to.y - job.from.y;
-            const len = Math.hypot(dx, dy) || 1;
-            return { x: dx / len, y: dy / len };
-          })();
-      const laneNormal = firstSegment ? { x: firstSegment.normalX, y: firstSegment.normalY }
-        : { x: -laneDir.y, y: laneDir.x };
-      const laneFacing = Math.atan2(laneDir.y, laneDir.x);
-      const neutralProj = midSample ? midSample.distance : laneLen * 0.5;
-      const neutralPoint = midSample ? { x: midSample.point.x, y: midSample.point.y }
-        : {
-            x: job.from.x + laneDir.x * neutralProj,
-            y: job.from.y + laneDir.y * neutralProj
-          };
-      const offsideLimit = Math.min(laneLen, neutralProj);
-      const minion = {
-        side: job.side,
-        x: job.from.x,
-        y: job.from.y,
-        to: { x: job.to.x, y: job.to.y },
-        spawn: { x: job.from.x, y: job.from.y },
-        neutralPoint,
-        neutralProj,
-        laneDir,
-        laneFacing,
-        laneNormal,
-        fanOffset,
-        laneLength: laneLen,
-        offsideLimit,
-        hp: job.hp,
-        maxHp: job.hp,
-        dmg: job.dmg,
-        cd: 0,
-        slowPct: 0,
-        slowTimer: 0,
-        stunTimer: 0,
-        beingPulledBy: null,
-        portalizing: 0,
-        inPortalZone: false,
-        scored: false,
-        facing: laneFacing,
-        nav: null,
-        lanePath,
-        laneIndex: Number.isFinite(job.laneIndex) ? job.laneIndex : 0,
-        laneLabel: job.laneLabel || String((job.laneIndex || 0) + 1),
-        pathDistance: 0,
-        laneProjection: null,
-        laneProgress: 0,
-        offLaneDistance: 0
-      };
-      minions.push(minion);
-      updateMinionLaneFrame(minion);
-      return;
-    }
-
-    const laneDx = job.to.x - job.from.x;
-    const laneDy = job.to.y - job.from.y;
-    const laneLen = Math.hypot(laneDx, laneDy) || 1;
-    const laneDir = { x: laneDx / laneLen, y: laneDy / laneLen };
-    const neutralDistance = laneLen * 0.5;
-    const neutralPoint = {
-      x: job.from.x + laneDir.x * neutralDistance,
-      y: job.from.y + laneDir.y * neutralDistance
-    };
-    const laneFacing = Math.atan2(laneDir.y, laneDir.x);
-    const laneNormal = { x: -laneDir.y, y: laneDir.x };
-    const offsideLimit = Math.min(laneLen, neutralDistance);
-    minions.push({
-      side: job.side,
-      x: job.from.x,
-      y: job.from.y,
-      to: {x: job.to.x, y: job.to.y},
-      spawn: {x: job.from.x, y: job.from.y},
-      neutralPoint,
-      neutralProj: neutralDistance,
-      laneDir,
-      laneFacing,
-      laneNormal,
-      fanOffset,
-      laneLength: laneLen,
-      offsideLimit,
-      hp: job.hp,
-      maxHp: job.hp,
-      dmg: job.dmg,
-      cd: 0,
-      slowPct: 0,
-      slowTimer: 0,
-      stunTimer: 0,
-      beingPulledBy: null,
-      portalizing: 0,
-      inPortalZone: false,
-      scored: false,
-      facing: laneFacing,
-      nav: null,
-      lanePath: null,
-      laneIndex: Number.isFinite(job.laneIndex) ? job.laneIndex : 0,
-      laneLabel: job.laneLabel || String((job.laneIndex || 0) + 1),
-      pathDistance: 0,
-      laneProjection: null,
-      laneProgress: 0,
-      offLaneDistance: 0
-    });
-  }
-
-  function distributeMinions(total, lanes){
-    const safeLanes = Math.max(1, Math.floor(Number(lanes) || 0));
-    const counts = new Array(safeLanes).fill(0);
-    const safeTotal = Math.max(0, Math.floor(Number(total) || 0));
-    if(safeTotal === 0){
-      return counts;
-    }
-    const base = Math.floor(safeTotal / safeLanes);
-    const remainder = safeTotal % safeLanes;
-    for(let i=0; i<safeLanes; i++){
-      counts[i] = base + (i < remainder ? 1 : 0);
-    }
-    return counts;
-  }
-
-  function spawnWave(side, waveTime, lanePaths){
-    const paths = Array.isArray(lanePaths) ? lanePaths.filter(Boolean) : [];
-    const {hp, dmg} = statsForWave(waveState.waveNumber);
-    if(paths.length){
-      const counts = distributeMinions(waveState.waveCount, paths.length);
-      const lanes = paths.map((path, laneIndex) => ({
-        path,
-        laneIndex,
-        count: counts[laneIndex] || 0,
-        emitted: 0
-      }));
-      const total = lanes.reduce((sum, lane) => sum + lane.count, 0);
-      let spawnNumber = 0;
-      let remaining = total;
-      while(remaining > 0){
-        let progressed = false;
-        for(const lane of lanes){
-          if(lane.emitted >= lane.count){
-            continue;
-          }
-          const spawnAt = waveTime + spawnNumber * waveState.spawnSpacingMs;
-          enqueueMinionSpawn(side, lane.path, hp, dmg, spawnAt, lane.emitted, lane.laneIndex);
-          lane.emitted += 1;
-          spawnNumber += 1;
-          remaining -= 1;
-          progressed = true;
-          if(remaining <= 0){
-            break;
-          }
-        }
-        if(!progressed){
-          break;
-        }
-      }
-      return;
-    }
-    const fallback = getPath(side);
-    if(!fallback){
-      return;
-    }
-    for(let i=0;i<waveState.waveCount;i++){
-      const spawnAt = waveTime + i * waveState.spawnSpacingMs;
-      enqueueMinionSpawn(side, fallback, hp, dmg, spawnAt, i, 0);
-    }
-  }
-
-  // Separation to prevent overlap (relaxed near portal)
-  function resolveOverlaps(iterations=2){
-    const n = minions.length;
-    if(n<=1) return;
-    for(let it=0; it<iterations; it++){
-      for(let i=0;i<n;i++){
-        const a = minions[i];
-        for(let j=i+1;j<n;j++){
-          const b = minions[j];
-
-          // Relax same-side separation if either is in intake zone (lets them stack toward portal)
-          if(a.side===b.side && (a.inPortalZone || b.inPortalZone)) continue;
-
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          let d = Math.hypot(dx,dy);
-          const minD = minionDiameter;
-
-          if(d < minD){
-            let nx, ny;
-            if(d === 0){
-              const angle = Math.random()*Math.PI*2;
-              nx = Math.cos(angle); ny = Math.sin(angle);
-              d = 0.0001;
-            } else {
-              nx = dx / d; ny = dy / d;
-            }
-            const push = (minD - d) * 0.5;
-            const nextAx = a.x - nx * push;
-            const nextAy = a.y - ny * push;
-            if(!circleCollides(nextAx, nextAy, minionRadius)){
-              a.x = nextAx;
-              a.y = nextAy;
-            }
-            const nextBx = b.x + nx * push;
-            const nextBy = b.y + ny * push;
-            if(!circleCollides(nextBx, nextBy, minionRadius)){
-              b.x = nextBx;
-              b.y = nextBy;
-            }
-
-            a.x = Math.max(minionRadius, Math.min(mapState.width - minionRadius, a.x));
-            a.y = Math.max(minionRadius, Math.min(mapState.height - minionRadius, a.y));
-            b.x = Math.max(minionRadius, Math.min(mapState.width - minionRadius, b.x));
-            b.y = Math.max(minionRadius, Math.min(mapState.height - minionRadius, b.y));
-          }
-        }
-      }
-    }
-  }
-
-  function resolvePlayerMinionSeparation(iterations = 2){
-    if(!minions.length || player.r <= 0) return;
-    const minDistBase = minionRadius + player.r;
-    if(minDistBase <= 0) return;
-    for(let it=0; it<iterations; it++){
-      let adjusted = false;
-      for(const m of minions){
-        if(!m || m.hp <= 0) continue;
-        const dx = m.x - player.x;
-        const dy = m.y - player.y;
-        let d = Math.hypot(dx, dy);
-        const minDist = minionRadius + player.r;
-        if(d < minDist){
-          let nx, ny;
-          if(d === 0){
-            const angle = Math.random() * Math.PI * 2;
-            nx = Math.cos(angle);
-            ny = Math.sin(angle);
-            d = 0.0001;
-          } else {
-            nx = dx / d;
-            ny = dy / d;
-          }
-          let overlap = minDist - d;
-          if(overlap <= 0) continue;
-          let playerShare = overlap * 0.5;
-          if(playerShare < 0) playerShare = 0;
-          const px0 = player.x;
-          const py0 = player.y;
-          let playerMove = 0;
-          if(playerShare > 0){
-            const playerResult = moveCircleWithCollision(px0, py0, -nx * playerShare, -ny * playerShare, player.r);
-            player.x = playerResult.x;
-            player.y = playerResult.y;
-            const movedX = player.x - px0;
-            const movedY = player.y - py0;
-            playerMove = -(movedX * nx + movedY * ny);
-            if(playerMove < 0) playerMove = 0;
-          }
-          let remaining = overlap - playerMove;
-          if(remaining > 0){
-            const mx0 = m.x;
-            const my0 = m.y;
-            const minionResult = moveCircleWithCollision(mx0, my0, nx * remaining, ny * remaining, minionRadius);
-            m.x = minionResult.x;
-            m.y = minionResult.y;
-            const movedX = m.x - mx0;
-            const movedY = m.y - my0;
-            const minionMove = movedX * nx + movedY * ny;
-            remaining -= minionMove;
-            if(remaining > 0){
-              const px1 = player.x;
-              const py1 = player.y;
-              const retry = moveCircleWithCollision(px1, py1, -nx * remaining, -ny * remaining, player.r);
-              player.x = retry.x;
-              player.y = retry.y;
-            }
-          }
-          player.x = Math.max(player.r, Math.min(mapState.width - player.r, player.x));
-          player.y = Math.max(player.r, Math.min(mapState.height - player.r, player.y));
-          m.x = Math.max(minionRadius, Math.min(mapState.width - minionRadius, m.x));
-          m.y = Math.max(minionRadius, Math.min(mapState.height - minionRadius, m.y));
-          adjusted = true;
-        }
-      }
-      if(!adjusted) break;
-    }
-  }
+  const physicsSystem = createPhysicsSystem({
+    minions,
+    minionDiameter,
+    minionRadius,
+    mapState,
+    player,
+    circleCollides,
+    moveCircleWithCollision
+  });
+  const { resolveOverlaps, resolvePlayerMinionSeparation } = physicsSystem;
 
   function isEnemyMinionForPlayer(minion){
     return !!(minion && minion.hp > 0 && minion.portalizing <= 0 && minion.side !== player.team);
@@ -21242,176 +18961,26 @@ import { createEventBus } from './core/events.js';
     }
   }
 
-  function updateCullingBarrageChannels(dt){
-    for(let i = cullingBarrageChannels.length - 1; i >= 0; i--){
-      const channel = cullingBarrageChannels[i];
-      if(!channel || channel.ended){
-        cullingBarrageChannels.splice(i, 1);
-        continue;
-      }
-      const caster = channel.casterRef || player;
-      const { x: originX, y: originY } = getSpellOrigin(caster);
-      channel.elapsed = Math.max(0, Number(channel.elapsed) || 0) + dt;
-
-      const interval = Math.max(0, Number(channel.shotInterval) || 0);
-      const totalShots = Math.max(1, Number(channel.totalShots) || 1);
-      while(channel.shotsFired < totalShots && channel.elapsed + 1e-6 >= channel.nextShotTime){
-        fireCullingBarrageShot(channel, originX, originY);
-        channel.shotsFired++;
-        channel.nextShotTime += interval;
-        if(interval <= 0){
-          channel.nextShotTime = channel.elapsed + 0.0001;
-        }
-      }
-
-      const controlTimers = [caster && caster.stunTimer, caster && caster.knockupTimer, caster && caster.silenceTimer, caster && caster.disarmTimer, caster && caster.polymorphTimer];
-      const interrupted = controlTimers.some(value => Number(value) > 0);
-      if(interrupted){
-        endCullingBarrageChannel(channel, { reason: 'control' });
-        continue;
-      }
-
-      const duration = Math.max(0, Number(channel.duration) || 0);
-      if((duration > 0 && channel.elapsed >= duration) || channel.shotsFired >= totalShots){
-        endCullingBarrageChannel(channel, { reason: 'complete' });
-      }
-    }
-  }
-
-  function updateCullingBarrageProjectiles(dt){
-    for(let i = cullingBarrageProjectiles.length - 1; i >= 0; i--){
-      const proj = cullingBarrageProjectiles[i];
-      if(!proj){
-        cullingBarrageProjectiles.splice(i, 1);
-        continue;
-      }
-      const range = Math.max(0, Number(proj.range) || 0);
-      const speed = Math.max(0, Number(proj.speed) || 0);
-      if(range <= 0 && speed <= 0){
-        cullingBarrageProjectiles.splice(i, 1);
-        continue;
-      }
-      const prevTraveled = Math.max(0, Number(proj.traveled) || 0);
-      const nextTraveled = speed > 0 ? prevTraveled + speed * dt : range;
-      const clampedTravel = range > 0 ? Math.min(nextTraveled, range) : nextTraveled;
-      const halfWidth = Math.max(0, (Number(proj.width) || 0) / 2);
-      const effectiveRadius = halfWidth + minionRadius;
-      const effectiveSq = effectiveRadius * effectiveRadius;
-      let removed = false;
-
-      if(proj.canPierce){
-        const hits = [];
-        for(const m of minions){
-          if(!m || !isEnemyMinionForPlayer(m)) continue;
-          if(m.hp <= 0 || m.portalizing > 0) continue;
-          if(proj.hitTargets && proj.hitTargets.has(m)) continue;
-          const relX = m.x - proj.startX;
-          const relY = m.y - proj.startY;
-          const along = relX * proj.dirX + relY * proj.dirY;
-          if(along < prevTraveled - minionRadius) continue;
-          if(along > clampedTravel + minionRadius) continue;
-          if(range > 0 && (along < -minionRadius || along > range + minionRadius)) continue;
-          const closestX = proj.startX + proj.dirX * along;
-          const closestY = proj.startY + proj.dirY * along;
-          const offX = m.x - closestX;
-          const offY = m.y - closestY;
-          if(offX * offX + offY * offY <= effectiveSq){
-            hits.push({ target: m, along });
-          }
-        }
-        if(hits.length){
-          hits.sort((a, b) => a.along - b.along);
-          if(!proj.hitTargets) proj.hitTargets = new Set();
-          for(const hit of hits){
-            if(proj.hitTargets.has(hit.target)) continue;
-            applyCullingBarrageHit(proj, hit.target);
-            proj.hitTargets.add(hit.target);
-          }
-        }
-      } else {
-        let hitTarget = null;
-        let hitAlong = Infinity;
-        for(const m of minions){
-          if(!m || !isEnemyMinionForPlayer(m)) continue;
-          if(m.hp <= 0 || m.portalizing > 0) continue;
-          const relX = m.x - proj.startX;
-          const relY = m.y - proj.startY;
-          const along = relX * proj.dirX + relY * proj.dirY;
-          if(along < prevTraveled - minionRadius) continue;
-          if(along > clampedTravel + minionRadius) continue;
-          if(range > 0 && (along < -minionRadius || along > range + minionRadius)) continue;
-          const closestX = proj.startX + proj.dirX * along;
-          const closestY = proj.startY + proj.dirY * along;
-          const offX = m.x - closestX;
-          const offY = m.y - closestY;
-          if(offX * offX + offY * offY <= effectiveSq && along < hitAlong){
-            hitAlong = along;
-            hitTarget = m;
-          }
-        }
-        if(hitTarget){
-          applyCullingBarrageHit(proj, hitTarget);
-          cullingBarrageProjectiles.splice(i, 1);
-          removed = true;
-        }
-      }
-
-      if(removed) continue;
-
-      proj.traveled = clampedTravel;
-      proj.x = proj.startX + proj.dirX * clampedTravel;
-      proj.y = proj.startY + proj.dirY * clampedTravel;
-      proj.age = (Number(proj.age) || 0) + dt;
-
-      if(range > 0 && clampedTravel >= range - 0.001){
-        cullingBarrageProjectiles.splice(i, 1);
-        continue;
-      }
-
-      if(range <= 0 && proj.age >= 0.6){
-        cullingBarrageProjectiles.splice(i, 1);
-      }
-    }
-  }
-
-  function updateProjectiles(dt){
-    for(let i = projectiles.length - 1; i >= 0; i--){
-      const p = projectiles[i];
-      if(p.targetRef){
-        const target = p.targetRef;
-        const targetAlive = target === player
-          || target.isPracticeDummy
-          || (typeof target.hp === 'number' && target.hp > 0);
-        if(targetAlive){
-          p.targetX = target.x;
-          p.targetY = target.y;
-        }
-      }
-      const duration = Math.max(0.001, p.duration);
-      p.progress += dt / duration;
-      if(p.progress >= 1){
-        const impact = typeof p.onImpact === 'function' ? p.onImpact : null;
-        projectiles.splice(i, 1);
-        if(impact){
-          try {
-            impact();
-          } catch (err){
-            console.error('Monster projectile impact failed', err);
-          }
-        }
-      }
-    }
-  }
-
-  function updateHitSplats(dt){
-    for(let i = hitsplats.length - 1; i >= 0; i--){
-      const h = hitsplats[i];
-      h.age += dt;
-      if(h.age >= (h.lifetime || 0.001)){
-        hitsplats.splice(i, 1);
-      }
-    }
-  }
+  const combatSystem = createCombatSystem({
+    cullingBarrageChannels,
+    cullingBarrageProjectiles,
+    projectiles,
+    hitsplats,
+    player,
+    minions,
+    minionRadius,
+    getSpellOrigin,
+    fireCullingBarrageShot,
+    endCullingBarrageChannel,
+    applyCullingBarrageHit,
+    isEnemyMinionForPlayer
+  });
+  const {
+    updateCullingBarrageChannels,
+    updateCullingBarrageProjectiles,
+    updateProjectiles,
+    updateHitSplats
+  } = combatSystem;
 
   function stagePointerPosition(e){
     if(!stage){
@@ -21440,6 +19009,9 @@ import { createEventBus } from './core/events.js';
   function renderMinimap(force = false){
     if(!minimapCtx || !minimapCanvas){
       return;
+    }
+    if(perfCounters && typeof perfCounters.minimapRenders === 'number'){
+      perfCounters.minimapRenders += 1;
     }
     const now = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
     if(!force && now - minimapState.lastRender < 120){
@@ -23646,6 +21218,12 @@ import { createEventBus } from './core/events.js';
 
   // Update & draw
   function tick(dt, now){
+    const frameStart = perfNow();
+    perfCounters.circleChecks = 0;
+    perfCounters.pathfindCalls = 0;
+    perfCounters.pathfindNodesVisited = 0;
+    perfCounters.minimapRenders = 0;
+    pathfindBudget = PATHFIND_BUDGET_PER_FRAME;
     // timer
     const gameTime = timerState.running ? now - timerState.start : timerState.elapsedMs;
     if(timerEl){
@@ -24240,6 +21818,7 @@ import { createEventBus } from './core/events.js';
     updatePings(dt);
     for(let i=minions.length-1;i>=0;i--){ if(minions[i].hp<=0) minions.splice(i,1); }
 
+    const updateEnd = perfNow();
     // draw
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, camera.baseWidth, camera.baseHeight);
@@ -24427,6 +22006,9 @@ import { createEventBus } from './core/events.js';
     drawVisionShapes();
 
     renderMinimap();
+
+    const frameEnd = perfNow();
+    recordPerfFrame(frameEnd - frameStart, updateEnd - frameStart, frameEnd - updateEnd, frameStart);
   }
 
   if(typeof window !== 'undefined'){
@@ -24437,6 +22019,45 @@ import { createEventBus } from './core/events.js';
     window.playerShopUndo = shopUndo;
     window.toggleRecall = toggleRecall;
     window.canPlayerShop = canPlayerShop;
+    window.copyPerformanceLog = buildPerfLog;
+  }
+
+  if(perfCopyLogBtn){
+    perfCopyLogBtn.addEventListener('click', async ()=>{
+      const log = perfState.history.length ? perfState.history[perfState.history.length - 1] : buildPerfLog();
+      const extended = perfState.history.length
+        ? perfState.history.slice(-10).join('\\n\\n')
+        : log;
+      if(navigator && navigator.clipboard && navigator.clipboard.writeText){
+        try {
+          await navigator.clipboard.writeText(extended);
+          setHudMessage('Performance log copied to clipboard.');
+          return;
+        } catch (err){
+          console.warn('Clipboard copy failed, falling back to prompt', err);
+        }
+      }
+      const fallback = window.prompt('Copy performance log:', extended);
+      if(fallback !== null){
+        setHudMessage('Performance log ready to share.');
+      }
+    });
+  }
+
+  if(perfDownloadLogBtn){
+    perfDownloadLogBtn.addEventListener('click', ()=>{
+      const logs = perfState.history.length ? perfState.history.slice(-20) : [buildPerfLog()];
+      const content = logs.join('\\n\\n');
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `MakaGame-perf-${new Date().toISOString().replace(/[:.]/g,'-')}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
   }
 
   // CSS vars init + UI initialize
