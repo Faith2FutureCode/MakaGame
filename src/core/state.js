@@ -438,6 +438,14 @@ export const PLAYER_STATUS_DEFS = [
       version: 1,
       minion: { diameter: 15, radius: 7.5, fanSpacing: 20.25 }
     },
+    turrets: {
+      perLane: 1,
+      range: 650,
+      damage: 150,
+      attackInterval: 1.25,
+      playerFocusSeconds: 2,
+      offsets: []
+    },
     minions: [],
     items: { abilityDefinitions: {} },
     effects: {

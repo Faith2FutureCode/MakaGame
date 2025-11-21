@@ -1773,6 +1773,23 @@
           <div class="subhint">Scaling is linear: stats this wave = base Ã— (1 + % Ã— (waveâˆ’1)).</div>
         </div>
 
+        <!-- Turrets -->
+        <button class="btn" data-settings-genre="moba" id="btnTurrets" data-icon="🗼" title="Turret settings">
+          Turrets <span class="hint">Lane defenses</span>
+        </button>
+        <div class="submenu" id="turretPane">
+          <div class="formrow"><label>Configuration</label><div class="rangeWrap"><button class="formButton" id="turretConfigLoad" type="button">Load setup</button><button class="formButton" id="turretConfigSave" type="button">Save setup</button></div></div>
+          <input id="turretConfigFile" type="file" accept="application/json,.json" style="display:none" />
+          <div class="formrow"><label for="turretCount">Turrets per lane</label><input type="number" id="turretCount" min="0" max="6" value="1"></div>
+          <div class="formrow"><label for="turretRange">Range (px)</label><input type="number" id="turretRange" min="100" max="4000" value="650"></div>
+          <div class="formrow"><label for="turretDamage">Damage</label><input type="number" id="turretDamage" min="1" max="10000" value="150"></div>
+          <div class="formrow"><label for="turretInterval">Fire cadence (sec)</label><input type="number" id="turretInterval" step="0.05" min="0.25" max="10" value="1.25"></div>
+          <div class="formrow"><label for="turretFocus">Dive punish window (sec)</label><input type="number" id="turretFocus" step="0.1" min="0" max="5" value="2"></div>
+          <div class="subhint">Offsets apply to each mirrored turret pair.</div>
+          <div class="formrow"><label>Offsets</label><div class="rangeWrap"><button class="formButton" id="turretResetOffsets" type="button">Reset to lane</button></div></div>
+          <div class="turretOffsetList" id="turretOffsets"></div>
+        </div>
+
         <!-- Player -->
         <button class="btn" data-settings-genre="core" id="btnPlayer" data-icon="ðŸ§" title="Player settings">
           Player <span class="hint">Hero tuningâ€¦</span>

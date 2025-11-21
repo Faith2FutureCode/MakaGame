@@ -110,6 +110,20 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const goldState = hudState.gold;
   const scoreState = hudState.score;
   const portalState = hudState.portal;
+  const TURRET_MIN_COUNT = 0;
+  const TURRET_MAX_COUNT = 6;
+  const TURRET_MIN_RANGE = 100;
+  const TURRET_MAX_RANGE = 4000;
+  const TURRET_MIN_DAMAGE = 0;
+  const TURRET_MAX_DAMAGE = 10000;
+  const TURRET_MIN_INTERVAL = 0.25;
+  const TURRET_MAX_INTERVAL = 10;
+  const TURRET_MIN_FOCUS = 0;
+  const TURRET_MAX_FOCUS = 5;
+  const TURRET_MIN_OFFSET = -2000;
+  const TURRET_MAX_OFFSET = 2000;
+  const turretState = normalizeTurretState(GameState.turrets);
+  GameState.turrets = turretState;
   const playerFloatState = hudState.playerFloat;
   const prayerState = ensurePrayerState();
   rebuildPrayerBindingLookup(prayerState);
@@ -178,6 +192,11 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const visionDummy = GameState.player.vision.dummy;
   const practiceDummy = GameState.practiceDummy;
   const practiceDummyState = GameState.player.vision.dummyState;
+  const turrets = [];
+  let turretsDirty = true;
+  let turretLayoutVersion = null;
+  let turretConfigRevision = 1;
+  let lastAppliedTurretConfigRevision = 0;
   let minionDiameter = GameState.lanes.minion.diameter;
   let minionRadius = GameState.lanes.minion.radius;
   let laneFanSpacing = GameState.lanes.minion.fanSpacing;
@@ -418,6 +437,60 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     let numeric = Number(value);
     if(!Number.isFinite(numeric)) numeric = fallback;
     return Math.max(SETTINGS_RANGE_MIN, Math.min(SETTINGS_RANGE_MAX, numeric));
+  }
+  function clampTurretCount(value){
+    const numeric = Math.floor(Number(value));
+    if(!Number.isFinite(numeric)) return 0;
+    return Math.max(TURRET_MIN_COUNT, Math.min(TURRET_MAX_COUNT, numeric));
+  }
+  function clampTurretRange(value){
+    const numeric = Number(value);
+    if(!Number.isFinite(numeric)) return 650;
+    return Math.max(TURRET_MIN_RANGE, Math.min(TURRET_MAX_RANGE, numeric));
+  }
+  function clampTurretDamage(value){
+    const numeric = Number(value);
+    if(!Number.isFinite(numeric)) return 150;
+    return Math.max(TURRET_MIN_DAMAGE, Math.min(TURRET_MAX_DAMAGE, numeric));
+  }
+  function clampTurretInterval(value){
+    const numeric = Number(value);
+    if(!Number.isFinite(numeric)) return 1.25;
+    return Math.max(TURRET_MIN_INTERVAL, Math.min(TURRET_MAX_INTERVAL, numeric));
+  }
+  function clampTurretFocus(value){
+    const numeric = Number(value);
+    if(!Number.isFinite(numeric)) return 2;
+    return Math.max(TURRET_MIN_FOCUS, Math.min(TURRET_MAX_FOCUS, numeric));
+  }
+  function clampTurretOffset(value){
+    const numeric = Number(value);
+    if(!Number.isFinite(numeric)) return 0;
+    return Math.max(TURRET_MIN_OFFSET, Math.min(TURRET_MAX_OFFSET, Math.round(numeric)));
+  }
+  function normalizeTurretState(state){
+    const target = state && typeof state === 'object' ? state : {};
+    target.hasCustomOffsets = target.hasCustomOffsets === true;
+    target.perLane = clampTurretCount(target.perLane ?? 1);
+    target.range = clampTurretRange(target.range ?? 650);
+    target.damage = clampTurretDamage(target.damage ?? 150);
+    target.attackInterval = clampTurretInterval(target.attackInterval ?? 1.25);
+    target.playerFocusSeconds = clampTurretFocus(target.playerFocusSeconds ?? 2);
+    if(!Array.isArray(target.offsets)){
+      target.offsets = [];
+    }
+    while(target.offsets.length < target.perLane){
+      target.offsets.push({ x: 0, y: 0 });
+    }
+    if(target.offsets.length > target.perLane){
+      target.offsets.length = target.perLane;
+    }
+    const hasNonZeroOffset = target.offsets.some(entry => {
+      if(!entry || typeof entry !== 'object') return false;
+      return (Number(entry.x) || 0) !== 0 || (Number(entry.y) || 0) !== 0;
+    });
+    target.hasCustomOffsets = target.hasCustomOffsets && hasNonZeroOffset ? true : hasNonZeroOffset;
+    return target;
   }
 
   function deepClone(value){
@@ -776,6 +849,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       }
       return snapshot;
     })() : null;
+    const turretsSnapshot = deepClone(normalizeTurretState(GameState.turrets));
 
     return {
       meta: metaClone,
@@ -786,6 +860,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       prayers: prayersSnapshot,
       monster: monsterSnapshot,
       practiceDummy: practiceDummySnapshot,
+      turrets: turretsSnapshot,
       spawns: spawnsClone,
       lanes: lanesClone,
       minions: minionSnapshots,
@@ -969,6 +1044,9 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         }
       }
       hudState.playerFloat = normalizePlayerFloatState(hudState.playerFloat);
+      assignDeep(GameState.turrets, snapshot.turrets || {});
+      normalizeTurretState(GameState.turrets);
+      markTurretsDirty();
       assignDeep(GameState.spawns, snapshot.spawns || {});
       assignDeep(GameState.lanes, snapshot.lanes || {});
       assignDeep(GameState.items, snapshot.items || {});
@@ -4769,6 +4847,18 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const minionHPInput = document.getElementById('minionHP');
   const minionDMGInput = document.getElementById('minionDMG');
   const scalePctInput = document.getElementById('portalState.scalePct');
+  const btnTurrets = document.getElementById('btnTurrets');
+  const turretPane = document.getElementById('turretPane');
+  const turretCountInput = document.getElementById('turretCount');
+  const turretRangeInput = document.getElementById('turretRange');
+  const turretDamageInput = document.getElementById('turretDamage');
+  const turretIntervalInput = document.getElementById('turretInterval');
+  const turretFocusInput = document.getElementById('turretFocus');
+  const turretOffsetList = document.getElementById('turretOffsets');
+  const turretResetOffsetsBtn = document.getElementById('turretResetOffsets');
+  const turretConfigLoadBtn = document.getElementById('turretConfigLoad');
+  const turretConfigSaveBtn = document.getElementById('turretConfigSave');
+  const turretConfigFileInput = document.getElementById('turretConfigFile');
 
   const btnScore   = document.getElementById('btnScore');
   const scorePane  = document.getElementById('scorePane');
@@ -12489,6 +12579,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
 
   const settingsPanelPairs = [
     { button: btnMinions, pane: minionsPane },
+    { button: btnTurrets, pane: turretPane },
     { button: btnPlayer, pane: playerPane },
     { button: btnPracticeDummy, pane: practiceDummyPane },
     { button: btnPrayers, pane: prayerPane },
@@ -13833,6 +13924,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
   }
   const pulses = [];
+  const turretShots = [];
   const laserProjectiles = [];
   const blinkingBoltProjectiles = [];
   const chargingGaleProjectiles = [];
@@ -15007,6 +15099,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   function invalidateLaneLayout({ resetMinions = true } = {}){
     GameState.lanes.layoutDirty = true;
     GameState.lanes.layout = null;
+    markTurretsDirty();
     if(resetMinions){
       pendingSpawns.length = 0;
       minions.length = 0;
@@ -15221,6 +15314,305 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       normalY: best.normalY,
       dist: Math.sqrt(best.distSq)
     };
+  }
+
+  function markTurretsDirty(){
+    turretsDirty = true;
+    turretLayoutVersion = null;
+    turretConfigRevision += 1;
+  }
+
+  function ensureTurretOffsetsCount(count){
+    const target = Math.max(0, Math.round(Number(count) || 0));
+    if(!Array.isArray(turretState.offsets)){
+      turretState.offsets = [];
+    }
+    while(turretState.offsets.length < target){
+      turretState.offsets.push({ x: 0, y: 0 });
+    }
+    if(turretState.offsets.length > target){
+      turretState.offsets.length = target;
+    }
+  }
+
+  function setTurretPerLane(value, { syncInput = true, notify = true } = {}){
+    const next = clampTurretCount(value);
+    turretState.perLane = next;
+    ensureTurretOffsetsCount(next);
+    if(!turretState.hasCustomOffsets){
+      for(let i = 0; i < turretState.offsets.length; i++){
+        const off = turretState.offsets[i];
+        if(!off || typeof off !== 'object'){
+          turretState.offsets[i] = { x: 0, y: 0 };
+        } else {
+          off.x = 0;
+          off.y = 0;
+        }
+      }
+    }
+    if(syncInput && turretCountInput){
+      turretCountInput.value = String(next);
+    }
+    updateTurretOffsetControls();
+    if(notify){
+      markTurretsDirty();
+      renderMinimap(true);
+    }
+    return next;
+  }
+
+  function setTurretRange(value, { syncInput = true } = {}){
+    const next = clampTurretRange(value);
+    turretState.range = next;
+    if(syncInput && turretRangeInput){
+      turretRangeInput.value = String(next);
+    }
+    markTurretsDirty();
+    renderMinimap(true);
+    return next;
+  }
+
+  function setTurretDamage(value, { syncInput = true } = {}){
+    const next = clampTurretDamage(value);
+    turretState.damage = next;
+    if(syncInput && turretDamageInput){
+      turretDamageInput.value = String(next);
+    }
+    markTurretsDirty();
+    return next;
+  }
+
+  function setTurretInterval(value, { syncInput = true } = {}){
+    const next = clampTurretInterval(value);
+    turretState.attackInterval = next;
+    if(syncInput && turretIntervalInput){
+      turretIntervalInput.value = String(next);
+    }
+    markTurretsDirty();
+    return next;
+  }
+
+  function setTurretFocus(value, { syncInput = true } = {}){
+    const next = clampTurretFocus(value);
+    turretState.playerFocusSeconds = next;
+    if(syncInput && turretFocusInput){
+      turretFocusInput.value = String(next);
+    }
+    markTurretsDirty();
+    return next;
+  }
+
+  function setTurretOffset(index, axis, value, { syncInput = true, notify = true } = {}){
+    ensureTurretOffsetsCount(turretState.perLane);
+    if(index < 0 || index >= turretState.offsets.length){
+      return;
+    }
+    const offset = turretState.offsets[index];
+    if(!offset || typeof offset !== 'object'){
+      turretState.offsets[index] = { x: 0, y: 0 };
+    }
+    const clamped = clampTurretOffset(value);
+    if(axis === 'x'){
+      turretState.offsets[index].x = clamped;
+      if(syncInput){
+        const input = document.getElementById(`turretOffsetX${index + 1}`);
+        if(input){
+          input.value = String(clamped);
+        }
+      }
+    } else if(axis === 'y'){
+      turretState.offsets[index].y = clamped;
+      if(syncInput){
+        const input = document.getElementById(`turretOffsetY${index + 1}`);
+        if(input){
+          input.value = String(clamped);
+        }
+      }
+    }
+    turretState.hasCustomOffsets = true;
+    if(notify){
+      markTurretsDirty();
+      renderMinimap(true);
+    }
+  }
+
+  function resetTurretOffsets(){
+    ensureTurretOffsetsCount(turretState.perLane);
+    turretState.hasCustomOffsets = false;
+    for(let i = 0; i < turretState.offsets.length; i++){
+      turretState.offsets[i] = { x: 0, y: 0 };
+    }
+    updateTurretOffsetControls();
+    markTurretsDirty();
+    renderMinimap(true);
+  }
+
+  function updateTurretOffsetControls(){
+    if(!turretOffsetList){
+      return;
+    }
+    ensureTurretOffsetsCount(turretState.perLane);
+    turretOffsetList.innerHTML = '';
+    for(let i = 0; i < turretState.perLane; i++){
+      const offset = turretState.offsets[i] || { x: 0, y: 0 };
+      const row = document.createElement('div');
+      row.className = 'formrow';
+      const label = document.createElement('label');
+      label.textContent = `Turret ${i + 1} offset`;
+      const group = document.createElement('div');
+      group.className = 'offsetGroup';
+
+      const inputX = document.createElement('input');
+      inputX.type = 'number';
+      inputX.id = `turretOffsetX${i + 1}`;
+      inputX.min = String(TURRET_MIN_OFFSET);
+      inputX.max = String(TURRET_MAX_OFFSET);
+      inputX.step = '1';
+      inputX.value = String(Math.round(offset.x || 0));
+      inputX.addEventListener('input', ()=> setTurretOffset(i, 'x', inputX.value, { syncInput: false, notify: true }));
+
+      const inputY = document.createElement('input');
+      inputY.type = 'number';
+      inputY.id = `turretOffsetY${i + 1}`;
+      inputY.min = String(TURRET_MIN_OFFSET);
+      inputY.max = String(TURRET_MAX_OFFSET);
+      inputY.step = '1';
+      inputY.value = String(Math.round(offset.y || 0));
+      inputY.addEventListener('input', ()=> setTurretOffset(i, 'y', inputY.value, { syncInput: false, notify: true }));
+
+      const labelX = document.createElement('label');
+      const spanX = document.createElement('span');
+      spanX.textContent = 'X';
+      labelX.appendChild(spanX);
+      labelX.appendChild(inputX);
+
+      const labelY = document.createElement('label');
+      const spanY = document.createElement('span');
+      spanY.textContent = 'Y';
+      labelY.appendChild(spanY);
+      labelY.appendChild(inputY);
+
+      group.appendChild(labelX);
+      group.appendChild(labelY);
+      row.appendChild(label);
+      row.appendChild(group);
+      turretOffsetList.appendChild(row);
+    }
+  }
+
+  function turretProgressFractions(count){
+    const total = Math.max(0, Math.floor(count) || 0);
+    if(total <= 0){
+      return [];
+    }
+    // Evenly space turrets between portal (0) and midpoint (0.5) on the lane.
+    const span = 0.5;
+    const fractions = [];
+    for(let i = 0; i < total; i++){
+      const step = span / (total + 1);
+      const t = step * (i + 1);
+      fractions.push(Math.max(0, Math.min(0.5, t)));
+    }
+    return fractions;
+  }
+
+  function createTurret({ id, side, laneIndex, slot, x, y, range, damage, attackInterval, focusSeconds }){
+    return {
+      id,
+      side,
+      laneIndex,
+      slot,
+      x,
+      y,
+      range,
+      damage,
+      attackInterval,
+      focusSeconds,
+      target: null,
+      cooldown: 0,
+      focusPlayerTimer: 0
+    };
+  }
+
+  function ensureTurrets(){
+    const layout = ensureLaneLayout();
+    const layoutVersion = layout ? layout.version : null;
+    if(!turretsDirty && turretLayoutVersion === layoutVersion && lastAppliedTurretConfigRevision === turretConfigRevision){
+      return turrets;
+    }
+    turretsDirty = false;
+    turretLayoutVersion = layoutVersion;
+    lastAppliedTurretConfigRevision = turretConfigRevision;
+    turrets.length = 0;
+    const perLane = clampTurretCount(turretState.perLane);
+    ensureTurretOffsetsCount(perLane);
+    if(!layout || !layout.lanes.length || perLane <= 0){
+      return turrets;
+    }
+    const useOffsets = turretState.hasCustomOffsets === true;
+    const slotFractions = turretProgressFractions(perLane);
+    const range = clampTurretRange(turretState.range);
+    const damage = clampTurretDamage(turretState.damage);
+    const attackInterval = clampTurretInterval(turretState.attackInterval);
+    const focusSeconds = clampTurretFocus(turretState.playerFocusSeconds);
+    let nextId = 1;
+    const clampCoord = (value, max) => {
+      if(!(max > 0)){
+        return Math.max(0, Number(value) || 0);
+      }
+      const numeric = Number(value);
+      if(!Number.isFinite(numeric)){
+        return 0;
+      }
+      return Math.max(0, Math.min(max, numeric));
+    };
+    for(const lane of layout.lanes){
+      const bluePath = lane && lane.bluePath;
+      const redPath = lane && lane.redPath;
+      const blueLength = bluePath ? bluePath.totalLength || 0 : 0;
+      const redLength = redPath ? redPath.totalLength || 0 : 0;
+      for(let slot = 0; slot < perLane; slot++){
+        const baseT = slotFractions[slot] ?? 0.25;
+        const tBlue = baseT;           // 0 -> own portal, 0.5 -> midpoint
+        const tRed = baseT;            // same fraction along red->blue path (starts at red portal)
+        const offset = turretState.offsets[slot] || { x: 0, y: 0 };
+        if(bluePath && blueLength > 0){
+          const sample = lanePointAtDistance(bluePath, blueLength * tBlue) || { point: { x: 0, y: 0 } };
+          const x = clampCoord(sample.point.x + (useOffsets ? (Number(offset.x) || 0) : 0), mapState.width);
+          const y = clampCoord(sample.point.y + (useOffsets ? (Number(offset.y) || 0) : 0), mapState.height);
+          turrets.push(createTurret({
+            id: nextId++,
+            side: 'blue',
+            laneIndex: lane.index,
+            slot,
+            x,
+            y,
+            range,
+            damage,
+            attackInterval,
+            focusSeconds
+          }));
+        }
+        if(redPath && redLength > 0){
+          const sample = lanePointAtDistance(redPath, redLength * tRed) || { point: { x: 0, y: 0 } };
+          const x = clampCoord(sample.point.x + (useOffsets ? (Number(offset.x) || 0) : 0), mapState.width);
+          const y = clampCoord(sample.point.y + (useOffsets ? (Number(offset.y) || 0) : 0), mapState.height);
+          turrets.push(createTurret({
+            id: nextId++,
+            side: 'red',
+            laneIndex: lane.index,
+            slot,
+            x,
+            y,
+            range,
+            damage,
+            attackInterval,
+            focusSeconds
+          }));
+        }
+      }
+    }
+    return turrets;
   }
 
   function getLanePathsForSide(side){
@@ -17188,6 +17580,72 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     applySnapshot: (snapshot)=> applyVisionSnapshot(snapshot)
   });
 
+  function buildTurretSnapshot(){
+    const base = defaultBuildSectionSnapshot(turretPane);
+    if(!base){
+      return null;
+    }
+    base.turrets = {
+      perLane: clampTurretCount(turretState.perLane),
+      range: clampTurretRange(turretState.range),
+      damage: clampTurretDamage(turretState.damage),
+      attackInterval: clampTurretInterval(turretState.attackInterval),
+      playerFocusSeconds: clampTurretFocus(turretState.playerFocusSeconds),
+      hasCustomOffsets: turretState.hasCustomOffsets === true,
+      offsets: turretState.offsets.map(entry => ({
+        x: Number(entry && entry.x) || 0,
+        y: Number(entry && entry.y) || 0
+      }))
+    };
+    return base;
+  }
+
+  function applyTurretSnapshot(snapshot){
+    if(!snapshot || typeof snapshot !== 'object'){
+      return false;
+    }
+    if(snapshot.turrets && typeof snapshot.turrets === 'object'){
+      const cfg = snapshot.turrets;
+      let appliedOffsets = false;
+      if(cfg.perLane !== undefined){
+        setTurretPerLane(cfg.perLane, { syncInput: true, notify: false });
+      }
+      if(cfg.range !== undefined){
+        setTurretRange(cfg.range, { syncInput: true });
+      }
+      if(cfg.damage !== undefined){
+        setTurretDamage(cfg.damage, { syncInput: true });
+      }
+      if(cfg.attackInterval !== undefined){
+        setTurretInterval(cfg.attackInterval, { syncInput: true });
+      }
+      if(cfg.playerFocusSeconds !== undefined){
+        setTurretFocus(cfg.playerFocusSeconds, { syncInput: true });
+      }
+      if(Array.isArray(cfg.offsets)){
+        ensureTurretOffsetsCount(cfg.offsets.length);
+        cfg.offsets.forEach((entry, index) => {
+          if(entry && typeof entry === 'object'){
+            setTurretOffset(index, 'x', entry.x, { syncInput: true, notify: false });
+            setTurretOffset(index, 'y', entry.y, { syncInput: true, notify: false });
+            appliedOffsets = appliedOffsets || !!(Number(entry.x) || Number(entry.y));
+          }
+        });
+      }
+      const explicitCustom = cfg.hasCustomOffsets === true;
+      const hasNonZero = turretState.offsets.some(entry => {
+        if(!entry || typeof entry !== 'object') return false;
+        return (Number(entry.x) || 0) !== 0 || (Number(entry.y) || 0) !== 0;
+      });
+      turretState.hasCustomOffsets = (explicitCustom && hasNonZero) || hasNonZero || appliedOffsets;
+      updateTurretOffsetControls();
+    }
+    const baseApplied = defaultApplySectionSnapshot(turretPane, snapshot);
+    markTurretsDirty();
+    renderMinimap(true);
+    return baseApplied || !!snapshot.turrets;
+  }
+
   function buildMinionSnapshot(){
     const base = defaultBuildSectionSnapshot(minionsPane);
     if(!base){
@@ -17233,6 +17691,18 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     filePrefix: 'minions',
     buildSnapshot: ()=> buildMinionSnapshot(),
     applySnapshot: (snapshot)=> applyMinionSnapshot(snapshot)
+  });
+
+  setupSectionPersistence({
+    paneId: 'turretPane',
+    saveButtonId: 'turretConfigSave',
+    loadButtonId: 'turretConfigLoad',
+    fileInputId: 'turretConfigFile',
+    storageKey: SECTION_STORAGE_PREFIX + 'turrets',
+    label: 'Turrets',
+    filePrefix: 'turrets',
+    buildSnapshot: ()=> buildTurretSnapshot(),
+    applySnapshot: (snapshot)=> applyTurretSnapshot(snapshot)
   });
 
   setupSectionPersistence({
@@ -17635,6 +18105,42 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     portalState.scalePct = next;
     scalePctInput.value = String(next);
   });
+  if(turretCountInput){
+    turretCountInput.value = String(turretState.perLane);
+    turretCountInput.addEventListener('input', ()=>{
+      setTurretPerLane(turretCountInput.value, { syncInput: false, notify: true });
+    });
+  } else {
+    setTurretPerLane(turretState.perLane, { syncInput: false, notify: false });
+  }
+    if(turretRangeInput){
+      turretRangeInput.value = String(turretState.range);
+      turretRangeInput.addEventListener('input', ()=>{
+        setTurretRange(turretRangeInput.value, { syncInput: false });
+      });
+    }
+  if(turretDamageInput){
+    turretDamageInput.value = String(turretState.damage);
+    turretDamageInput.addEventListener('input', ()=>{
+      setTurretDamage(turretDamageInput.value, { syncInput: false });
+    });
+  }
+  if(turretIntervalInput){
+    turretIntervalInput.value = String(turretState.attackInterval);
+    turretIntervalInput.addEventListener('input', ()=>{
+      setTurretInterval(turretIntervalInput.value, { syncInput: false });
+    });
+  }
+  if(turretFocusInput){
+    turretFocusInput.value = String(turretState.playerFocusSeconds);
+    turretFocusInput.addEventListener('input', ()=>{
+      setTurretFocus(turretFocusInput.value, { syncInput: false });
+    });
+  }
+  if(turretResetOffsetsBtn){
+    turretResetOffsetsBtn.addEventListener('click', resetTurretOffsets);
+  }
+  updateTurretOffsetControls();
   playerSpeedInput.addEventListener('input', ()=>{
     const speed = clamp(playerSpeedInput.value,1,1000);
     playerSpeedInput.value = String(speed);
@@ -18288,8 +18794,18 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   });
   const { resolveOverlaps, resolvePlayerMinionSeparation } = physicsSystem;
 
+  function isEnemyMinionForSide(minion, side){
+    if(!minion || minion.isPracticeDummy){
+      return false;
+    }
+    if(minion.side !== 'blue' && minion.side !== 'red'){
+      return false;
+    }
+    return !!(minion.hp > 0 && minion.portalizing <= 0 && minion.side !== side);
+  }
+
   function isEnemyMinionForPlayer(minion){
-    return !!(minion && minion.hp > 0 && minion.portalizing <= 0 && minion.side !== player.team);
+    return isEnemyMinionForSide(minion, player.team);
   }
 
   function monsterAttackRadius(monster = monsterState){
@@ -18571,6 +19087,160 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       updateMonsterHud();
     }
     handlePracticeDummyDamage(target, preHP);
+    if(!isEnemyMinionForPlayer(target)){
+      playerDrewTurretAggro(target);
+    }
+  }
+
+  function playerDrewTurretAggro(target){
+    if(!target || target === player){
+      return;
+    }
+    const defenderSide = target.side === 'blue' || target.side === 'red' ? target.side : null;
+    if(!defenderSide || defenderSide === player.team){
+      return;
+    }
+    const focusSeconds = clampTurretFocus(turretState.playerFocusSeconds);
+    if(!(focusSeconds > 0)){
+      return;
+    }
+    const turretList = ensureTurrets();
+    if(!turretList.length){
+      return;
+    }
+    const playerRadius = Math.max(6, Number(player.r) || 0);
+    for(const turret of turretList){
+      if(!turret || turret.side !== defenderSide){
+        continue;
+      }
+      const range = Math.max(0, Number(turret.range) || 0);
+      const effective = range + playerRadius;
+      const dx = player.x - turret.x;
+      const dy = player.y - turret.y;
+      if(dx * dx + dy * dy <= effective * effective){
+        turret.focusPlayerTimer = Math.max(turret.focusPlayerTimer || 0, focusSeconds);
+        turret.target = player;
+      }
+    }
+  }
+
+  function isEnemyPlayerForTurret(turret){
+    return !!(turret && player && player.team !== turret.side && Number(player.hp) > 0);
+  }
+
+  function turretTargetInRange(turret, target){
+    if(!turret || !target){
+      return false;
+    }
+    const range = Math.max(0, Number(turret.range) || 0);
+    const padding = target === player ? Math.max(6, Number(player.r) || 0) : minionRadius;
+    const dx = target.x - turret.x;
+    const dy = target.y - turret.y;
+    const effective = range + padding;
+    return dx * dx + dy * dy <= effective * effective;
+  }
+
+  function fireTurret(turret, target){
+    if(!turret || !target){
+      return;
+    }
+    const damage = Math.max(0, Number(turret.damage) || 0);
+    const offset = target === player ? Math.max(6, Number(player.r) || 0) : minionRadius;
+    turretShots.push({
+      fromX: turret.x,
+      fromY: turret.y,
+      toX: target.x,
+      toY: target.y,
+      side: turret.side,
+      age: 0,
+      duration: 0.2
+    });
+    if(damage <= 0){
+      return;
+    }
+    if(target === player){
+      damagePlayer(damage);
+      return;
+    }
+    const prevHp = Number(target.hp) || 0;
+    target.hp = Math.max(0, prevHp - damage);
+    spawnHitSplat(target.x, target.y - offset, damage);
+    handlePracticeDummyDamage(target, prevHp);
+  }
+
+  function updateTurretShots(dt){
+    for(let i = turretShots.length - 1; i >= 0; i--){
+      const shot = turretShots[i];
+      shot.age = (Number(shot.age) || 0) + dt;
+      const duration = Math.max(0.05, Number(shot.duration) || 0.2);
+      if(shot.age >= duration){
+        turretShots.splice(i, 1);
+      }
+    }
+  }
+
+  function updateTurrets(dt){
+    const turretList = ensureTurrets();
+    if(!turretList.length){
+      updateTurretShots(dt);
+      return;
+    }
+    const focusDefault = clampTurretFocus(turretState.playerFocusSeconds);
+    const playerRadius = Math.max(6, Number(player.r) || 0);
+    for(const turret of turretList){
+      if(!turret){
+        continue;
+      }
+      turret.cooldown = Math.max(0, (Number(turret.cooldown) || 0) - dt);
+      turret.focusPlayerTimer = Math.max(0, (Number(turret.focusPlayerTimer) || 0) - dt);
+      const range = Math.max(0, Number(turret.range) || 0);
+      const effectiveMinionRange = range + minionRadius;
+      const effectiveMinionSq = effectiveMinionRange * effectiveMinionRange;
+      let bestMinion = null;
+      let bestMinionDistSq = Infinity;
+      for(const m of minions){
+        if(!isEnemyMinionForSide(m, turret.side)) continue;
+        const dx = m.x - turret.x;
+        const dy = m.y - turret.y;
+        const distSq = dx * dx + dy * dy;
+        if(distSq <= effectiveMinionSq && distSq < bestMinionDistSq){
+          bestMinion = m;
+          bestMinionDistSq = distSq;
+        }
+      }
+      const playerInRange = isEnemyPlayerForTurret(turret) && turretTargetInRange(turret, player);
+      let currentTarget = turret.target;
+      if(currentTarget){
+        const alive = currentTarget === player ? Number(player.hp) > 0
+          : (!!currentTarget.hp && !currentTarget.isPracticeDummy && currentTarget.portalizing <= 0);
+        if(!alive || !turretTargetInRange(turret, currentTarget)){
+          currentTarget = null;
+        }
+      }
+      if(!currentTarget){
+        if(turret.focusPlayerTimer > 0 && playerInRange){
+          currentTarget = player;
+        } else if(bestMinion){
+          currentTarget = bestMinion;
+        } else if(playerInRange){
+          currentTarget = player;
+        }
+      } else if(currentTarget === player && bestMinion && turret.focusPlayerTimer <= 0){
+        currentTarget = bestMinion;
+      } else if(currentTarget !== player && playerInRange && turret.focusPlayerTimer > 0){
+        currentTarget = player;
+      }
+      if(currentTarget === player){
+        turret.focusPlayerTimer = Math.max(turret.focusPlayerTimer, focusDefault);
+      }
+      turret.target = currentTarget;
+      if(currentTarget && turret.cooldown <= 0){
+        fireTurret(turret, currentTarget);
+        const interval = clampTurretInterval(turret.attackInterval);
+        turret.cooldown = interval;
+      }
+    }
+    updateTurretShots(dt);
   }
 
   function updatePlayerAutoAttack(dt){
@@ -19303,6 +19973,25 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         minimapCtx.textAlign = 'center';
         minimapCtx.textBaseline = 'middle';
         minimapCtx.fillText(lane.label, midX, midY + Math.max(0.5, scale * 0.8));
+      }
+      minimapCtx.restore();
+    }
+
+    const turretList = ensureTurrets();
+    if(turretList.length){
+      minimapCtx.save();
+      minimapCtx.lineWidth = 1.6;
+      for(const turret of turretList){
+        if(!turret) continue;
+        const px = turret.x * scaleX;
+        const py = turret.y * scaleY;
+        const size = Math.max(4, 8 * scale);
+        minimapCtx.beginPath();
+        minimapCtx.rect(px - size / 2, py - size / 2, size, size);
+        minimapCtx.fillStyle = turret.side === 'red' ? '#ff5577' : '#2aa9ff';
+        minimapCtx.fill();
+        minimapCtx.strokeStyle = '#041019';
+        minimapCtx.stroke();
       }
       minimapCtx.restore();
     }
@@ -20472,6 +21161,96 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     ctx.strokeStyle = engaged ? '#f8cfff' : '#7b4cff';
     ctx.stroke();
     ctx.restore();
+  }
+
+  function drawTurrets(){
+    const turretList = ensureTurrets();
+    if(!turretList.length){
+      return;
+    }
+    const bodyRadius = Math.max(12, minionRadius + 6);
+    for(const turret of turretList){
+      if(!turret){
+        continue;
+      }
+      const range = Math.max(0, Number(turret.range) || 0);
+      const color = turret.side === 'red' ? '#ff5577' : '#2aa9ff';
+      const rangeVisible = range > 0 && circleInCamera(turret.x, turret.y, range + 18);
+      if(rangeVisible){
+        ctx.save();
+        ctx.globalAlpha = turret.target === player ? 0.2 : 0.12;
+        ctx.fillStyle = turret.side === 'red' ? 'rgba(255, 85, 119, 0.18)' : 'rgba(42, 169, 255, 0.18)';
+        ctx.beginPath();
+        ctx.arc(turret.x, turret.y, range, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = turret.target === player ? 0.8 : 0.5;
+        ctx.lineWidth = turret.target === player ? 3 : 2;
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.arc(turret.x, turret.y, range, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      if(!circleInCamera(turret.x, turret.y, bodyRadius + 10)){
+        continue;
+      }
+      ctx.save();
+      const gradient = ctx.createRadialGradient(turret.x, turret.y - bodyRadius * 0.3, bodyRadius * 0.2, turret.x, turret.y, bodyRadius);
+      gradient.addColorStop(0, '#fdfdfd');
+      gradient.addColorStop(0.6, color);
+      gradient.addColorStop(1, '#05121a');
+      ctx.beginPath();
+      ctx.arc(turret.x, turret.y, bodyRadius, 0, Math.PI * 2);
+      ctx.fillStyle = gradient;
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#05121a';
+      ctx.stroke();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = turret.side === 'red' ? '#ffc6d3' : '#c8ecff';
+      ctx.beginPath();
+      ctx.arc(turret.x, turret.y, bodyRadius * 0.58, 0, Math.PI * 2);
+      ctx.stroke();
+      if(turret.target){
+        const angle = Math.atan2(turret.target.y - turret.y, turret.target.x - turret.x);
+        ctx.beginPath();
+        ctx.moveTo(turret.x, turret.y);
+        ctx.lineTo(turret.x + Math.cos(angle) * (bodyRadius + 6), turret.y + Math.sin(angle) * (bodyRadius + 6));
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ffe27a';
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  function drawTurretShots(){
+    for(const shot of turretShots){
+      if(!shot){
+        continue;
+      }
+      if(!rectIntersectsCamera(shot.fromX, shot.fromY, shot.toX, shot.toY, 12)){
+        continue;
+      }
+      const life = Math.max(0.05, Number(shot.duration) || 0.2);
+      const age = Math.max(0, Math.min(life, Number(shot.age) || 0));
+      const t = life > 0 ? age / life : 1;
+      const color = shot.side === 'red' ? '#ff8aa3' : '#9ad7ff';
+      ctx.save();
+      ctx.globalAlpha = 0.9 - t * 0.35;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(shot.fromX, shot.fromY);
+      ctx.lineTo(shot.toX, shot.toY);
+      ctx.stroke();
+      ctx.globalAlpha = 1 - t * 0.6;
+      ctx.fillStyle = '#fdf6d0';
+      ctx.beginPath();
+      ctx.arc(shot.toX, shot.toY, Math.max(2.5, 6 - t * 3), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   function drawMinion(m){
@@ -21827,6 +22606,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(player.attackWindup > 0 && playerMoveDuringFrame > 0.5){
       cancelPlayerAttack();
     }
+    updateTurrets(dt);
     updatePlayerAutoAttack(dt);
     updatePlayerAnimationFromGameplay(dt);
     updateAbilityCooldowns(dt);
@@ -21992,6 +22772,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(blueSpawns[0]) drawSpawnAndPortal(blueSpawns[0],'#2aa9ff','B');
     if(redSpawns[0])  drawSpawnAndPortal(redSpawns[0],'#ff5577','R');
 
+    drawTurrets();
     drawMonster();
 
     // MINIONS (finally rendered)
@@ -22005,6 +22786,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       drawMinion(m);
     }
 
+    drawTurretShots();
     drawSlamCasts();
     drawBeamCasts();
     drawLaserConeCasts();
