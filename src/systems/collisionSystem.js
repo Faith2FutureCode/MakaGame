@@ -6,9 +6,20 @@ export function createCollisionHelpers({
   SETTINGS_RANGE_MIN,
   perfCounters
 } = {}) {
-  const NAV_CELL_SIZE = 14;
   const MAX_PATHFIND_NODES = 5000;
-  const NAV_LINE_STEP = NAV_CELL_SIZE * 0.5;
+
+  function getNavGrid(){
+    return GameState && GameState.map && GameState.map.hitbox ? GameState.map.hitbox.grid : null;
+  }
+
+  function navCellSize(){
+    const grid = getNavGrid();
+    return grid && grid.cellSize ? grid.cellSize : 14;
+  }
+
+  function navLineStep(){
+    return navCellSize() * 0.5;
+  }
 
   function hitboxPixelsReady() {
     return !!(GameState.map.hitbox.loaded && GameState.map.hitbox.data && GameState.map.hitbox.data.length);
@@ -23,11 +34,22 @@ export function createCollisionHelpers({
     if(customColliders.length && collidersBlockCircle(x, y, radius)){
       return true;
     }
-    if(!hitboxPixelsReady()) return false;
-    const width = GameState.map.hitbox.width;
-    const height = GameState.map.hitbox.height;
-    if((x + radius) < 0 || (y + radius) < 0 || (x - radius) >= width || (y - radius) >= height){
-      return true;
+    const navGrid = getNavGrid();
+    if(navGrid && navGrid.mask && navGrid.mask.length){
+      const size = navGrid.cellSize;
+      const minCx = Math.max(0, Math.floor((x - radius) / size));
+      const maxCx = Math.min(navGrid.cols - 1, Math.floor((x + radius) / size));
+      const minCy = Math.max(0, Math.floor((y - radius) / size));
+      const maxCy = Math.min(navGrid.rows - 1, Math.floor((y + radius) / size));
+      for(let cy = minCy; cy <= maxCy; cy++){
+        const rowIndex = cy * navGrid.cols;
+        for(let cx = minCx; cx <= maxCx; cx++){
+          if(navGrid.mask[rowIndex + cx]){
+            return true;
+          }
+        }
+      }
+      return false;
     }
     const coarse = GameState.map.hitbox && GameState.map.hitbox.coarse;
     if(coarse && coarse.mask && coarse.mask.length){
@@ -46,27 +68,7 @@ export function createCollisionHelpers({
       }
       return false;
     }
-    if(radius <= 0){
-      const px = Math.floor(x);
-      const py = Math.floor(y);
-      if(px < 0 || py < 0 || px >= GameState.map.hitbox.width || py >= GameState.map.hitbox.height) return true;
-      return !!GameState.map.hitbox.data[py * GameState.map.hitbox.width + px];
-    }
-    const minX = Math.max(0, Math.floor(x - radius));
-    const maxX = Math.min(GameState.map.hitbox.width - 1, Math.ceil(x + radius));
-    const minY = Math.max(0, Math.floor(y - radius));
-    const maxY = Math.min(GameState.map.hitbox.height - 1, Math.ceil(y + radius));
-    const rSq = radius * radius;
-    for(let py=minY; py<=maxY; py++){
-      const rowIndex = py * GameState.map.hitbox.width;
-      for(let px=minX; px<=maxX; px++){
-        if(GameState.map.hitbox.data[rowIndex + px]){
-          const dx = (px + 0.5) - x;
-          const dy = (py + 0.5) - y;
-          if(dx*dx + dy*dy <= rSq) return true;
-        }
-      }
-    }
+    // Fallback: if no grid/coarse data, assume free
     return false;
   }
 
@@ -281,19 +283,31 @@ export function createCollisionHelpers({
   }
 
   function pointToCell(x, y){
-    const cx = Math.max(0, Math.min(Math.floor(x / NAV_CELL_SIZE), Math.ceil(mapState.width / NAV_CELL_SIZE) - 1));
-    const cy = Math.max(0, Math.min(Math.floor(y / NAV_CELL_SIZE), Math.ceil(mapState.height / NAV_CELL_SIZE) - 1));
+    const size = navCellSize();
+    const grid = getNavGrid();
+    const maxCx = grid ? grid.cols - 1 : Math.ceil(mapState.width / size) - 1;
+    const maxCy = grid ? grid.rows - 1 : Math.ceil(mapState.height / size) - 1;
+    const cx = Math.max(0, Math.min(Math.floor(x / size), maxCx));
+    const cy = Math.max(0, Math.min(Math.floor(y / size), maxCy));
     return {cx, cy};
   }
 
   function cellCenter(cx, cy){
-    const x = Math.max(0, Math.min(mapState.width - 1, (cx + 0.5) * NAV_CELL_SIZE));
-    const y = Math.max(0, Math.min(mapState.height - 1, (cy + 0.5) * NAV_CELL_SIZE));
+    const size = navCellSize();
+    const grid = getNavGrid();
+    const maxX = grid ? grid.cols * size : mapState.width;
+    const maxY = grid ? grid.rows * size : mapState.height;
+    const x = Math.max(0, Math.min(maxX - 1, (cx + 0.5) * size));
+    const y = Math.max(0, Math.min(maxY - 1, (cy + 0.5) * size));
     return {x, y};
   }
 
   function isCellWalkable(cx, cy, cols, rows, radius){
     if(cx < 0 || cy < 0 || cx >= cols || cy >= rows) return false;
+    const grid = getNavGrid();
+    if(grid && grid.mask && grid.cols === cols && grid.rows === rows){
+      return grid.mask[cy * cols + cx] === 0;
+    }
     const {x, y} = cellCenter(cx, cy);
     return !circleCollides(x, y, radius);
   }
@@ -335,7 +349,7 @@ export function createCollisionHelpers({
   function lineOfSight(ax, ay, bx, by, radius){
     const dist = Math.hypot(bx - ax, by - ay);
     if(dist === 0) return !circleCollides(ax, ay, radius);
-    const steps = Math.max(1, Math.ceil(dist / Math.max(4, NAV_LINE_STEP)));
+    const steps = Math.max(1, Math.ceil(dist / Math.max(4, navLineStep())));
     for(let i=1;i<steps;i++){
       const t = i / steps;
       const x = ax + (bx - ax) * t;
@@ -362,8 +376,9 @@ export function createCollisionHelpers({
   function findPath(start, goal, radius){
     if(perfCounters && typeof perfCounters.pathfindCalls === 'number'){ perfCounters.pathfindCalls += 1; }
     if(!hitboxActive()) return null;
-    const cols = Math.ceil(mapState.width / NAV_CELL_SIZE);
-    const rows = Math.ceil(mapState.height / NAV_CELL_SIZE);
+    const size = navCellSize();
+    const cols = Math.ceil(mapState.width / size);
+    const rows = Math.ceil(mapState.height / size);
     let startCell = pointToCell(start.x, start.y);
     let goalCell = pointToCell(goal.x, goal.y);
     const startInfo = findNearestWalkableCell(startCell.cx, startCell.cy, cols, rows, radius);
@@ -480,7 +495,7 @@ export function createCollisionHelpers({
     lineOfSight,
     simplifyPath,
     findPath,
-    NAV_CELL_SIZE,
-    NAV_LINE_STEP
+    navCellSize,
+    navLineStep
   };
 }

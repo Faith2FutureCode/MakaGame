@@ -4667,10 +4667,14 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const perfCollidersValue = document.getElementById('perfCollidersValue');
   const perfVisionValue = document.getElementById('perfVisionValue');
   const perfSpikeValue = document.getElementById('perfSpikeValue');
+  const perfCollLoadValue = document.getElementById('perfCollLoadValue');
+  const perfPathLoadValue = document.getElementById('perfPathLoadValue');
+  const perfDensityValue = document.getElementById('perfDensityValue');
   const perfCopyLogBtn = document.getElementById('perfCopyLog');
   const perfDownloadLogBtn = document.getElementById('perfDownloadLog');
+  const perfStressTestBtn = document.getElementById('perfStressTest');
 
-  const NAV_COARSE_CELL = 128;
+  const NAV_COARSE_CELL = 96;
 
   const settingHelpEl = document.getElementById('settingHelp');
   const settingHelpTitle = document.getElementById('settingHelpTitle');
@@ -6850,6 +6854,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
 
   const PATHFIND_BUDGET_PER_FRAME = 3;
   let pathfindBudget = PATHFIND_BUDGET_PER_FRAME;
+  let stressNavMode = false;
 
   function perfNow(){
     return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
@@ -6922,6 +6927,28 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(perfVisionValue){
       perfVisionValue.textContent = String((customVisionSources && customVisionSources.length) || 0);
     }
+    // Budgets
+    // Tweak these to scale the budget meters; current values expect ~60k nodes/frame to show ~80% load
+    const COLL_BUDGET = 2500; // checks per frame budget target
+    const PATH_BUDGET = 75000; // nodes per frame budget target
+    if(perfCollLoadValue){
+      const coll = Math.round(perfState.lastCircleRate || perfCounters.circleChecks || 0);
+      const pct = COLL_BUDGET > 0 ? Math.min(1, coll / COLL_BUDGET) : 0;
+      perfCollLoadValue.textContent = `${coll} / ${COLL_BUDGET} (${Math.round(pct * 100)}% used)`;
+      perfCollLoadValue.style.color = pct < 0.5 ? '#9effa0' : (pct < 0.85 ? '#ffd166' : '#ff7b7b');
+    }
+    if(perfPathLoadValue){
+      const nodes = Math.round(perfState.lastPathNodesRate || perfCounters.pathfindNodesVisited || 0);
+      const pct = PATH_BUDGET > 0 ? Math.min(1, nodes / PATH_BUDGET) : 0;
+      perfPathLoadValue.textContent = `${nodes} / ${PATH_BUDGET} (${Math.round(pct * 100)}% used)`;
+      perfPathLoadValue.style.color = pct < 0.5 ? '#9effa0' : (pct < 0.85 ? '#ffd166' : '#ff7b7b');
+    }
+    if(perfDensityValue){
+      const area = Math.max(1, (mapState.width || 0) * (mapState.height || 0));
+      const colliderCount = customColliders.length || 0;
+      const density = Math.round(colliderCount / area * 100000 * 100) / 100; // per 100k px^2
+      perfDensityValue.textContent = `${density} coll / 100k px^2`;
+    }
     if(perfSpikeValue){
       if(perfState.lastSpike){
         const spike = perfState.lastSpike;
@@ -6970,6 +6997,8 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       const elapsed = now - perfState.lastSample;
       perfState.lastFps = (perfState.frameCount * 1000) / Math.max(1, elapsed);
       perfState.lastFrameMs = perfState.frameSum / Math.max(1, perfState.frameCount);
+      perfState.lastCircleRate = perfState.frameCount ? (perfState.circleSum / Math.max(1, perfState.frameCount)) : perfCounters.circleChecks;
+      perfState.lastPathNodesRate = perfState.frameCount ? (perfState.pathfindNodes / Math.max(1, perfState.frameCount)) : perfCounters.pathfindNodesVisited;
       // snapshot history
       const snapshot = buildPerfLog();
       perfState.history.push(snapshot);
@@ -15649,7 +15678,8 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     lineOfSight,
     simplifyPath,
     findPath,
-    NAV_CELL_SIZE
+    navCellSize,
+    navLineStep
   } = collisionHelpers;
 
   function clearEntityNav(entity){ if(entity && entity.nav){ entity.nav = null; } }
@@ -15663,7 +15693,8 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   function ensureNavForEntity(entity, goal, radius){
     if(!hitboxActive() || !goal) return null;
     const distanceToGoal = Math.hypot(goal.x - entity.x, goal.y - entity.y);
-    if(distanceToGoal <= Math.max(radius * 0.8, NAV_CELL_SIZE * 0.5)){
+    const cellSize = navCellSize();
+    if(distanceToGoal <= Math.max(radius * 0.8, cellSize * 0.5)){
       clearEntityNav(entity);
       return null;
     }
@@ -15680,7 +15711,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       pathfindBudget -= 1;
       entity.nav = { key, points: path, index: 0 };
     }
-    const tol = Math.max(radius * 0.6, NAV_CELL_SIZE * 0.4);
+    const tol = Math.max(radius * 0.6, cellSize * 0.4);
     while(entity.nav && entity.nav.index < entity.nav.points.length){
       const waypoint = entity.nav.points[entity.nav.index];
       const d = Math.hypot(waypoint.x - entity.x, waypoint.y - entity.y);
@@ -21223,7 +21254,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     perfCounters.pathfindCalls = 0;
     perfCounters.pathfindNodesVisited = 0;
     perfCounters.minimapRenders = 0;
-    pathfindBudget = PATHFIND_BUDGET_PER_FRAME;
+    pathfindBudget = stressNavMode ? 6 : PATHFIND_BUDGET_PER_FRAME;
     // timer
     const gameTime = timerState.running ? now - timerState.start : timerState.elapsedMs;
     if(timerEl){
@@ -21483,6 +21514,13 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
           navGoal = m.neutralPoint;
         } else {
           dest = m.to;
+        }
+        if(stressNavMode && m.stressNav){
+          if(followLane && laneDestX !== null && laneDestY !== null){
+            navGoal = { x: laneDestX, y: laneDestY };
+          } else if(!navGoal && dest){
+            navGoal = { x: dest.x, y: dest.y };
+          }
         }
         let navWaypoint = null;
         let usingNav = false;
@@ -22058,6 +22096,240 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     });
+  }
+
+  function generateStressColliders(width, height){
+    const colliders = [];
+    const rows = 6;
+    const cols = 9;
+    const margin = 220;
+    const spacingX = Math.max(120, (width - margin * 2) / Math.max(1, cols - 1));
+    const spacingY = Math.max(140, (height - margin * 2) / Math.max(1, rows - 1));
+    let nextId = Math.max(1, Number(mapState.colliders.nextId) || 1);
+    for(let row=0; row<rows; row++){
+      for(let col=0; col<cols; col++){
+        const offset = (row % 2) ? spacingX * 0.35 : 0;
+        const x = Math.min(width - margin, margin + col * spacingX + offset);
+        const y = Math.min(height - margin, margin + row * spacingY);
+        const radius = (row % 3 === 0) ? 140 : 110;
+        colliders.push({ id: nextId++, type: 'circle', x, y, radius });
+      }
+    }
+    const coreLength = Math.min(width, height) * 0.65;
+    colliders.push({ id: nextId++, type: 'capsule', x: width * 0.5, y: height * 0.5, radius: 140, length: coreLength, angle: Math.PI * 0.25 });
+    colliders.push({ id: nextId++, type: 'capsule', x: width * 0.5, y: height * 0.5, radius: 140, length: coreLength, angle: -Math.PI * 0.25 });
+    return { colliders, nextId };
+  }
+
+  function buildNavGridFromColliders(cellSize = NAV_COARSE_CELL){
+    const size = Math.max(8, Math.floor(cellSize) || NAV_COARSE_CELL);
+    const cols = Math.ceil(mapState.width / size);
+    const rows = Math.ceil(mapState.height / size);
+    const mask = new Uint8Array(cols * rows);
+    for(let cy = 0; cy < rows; cy++){
+      const y = cy * size + size * 0.5;
+      for(let cx = 0; cx < cols; cx++){
+        const x = cx * size + size * 0.5;
+        if(collidersBlockCircle(x, y, size * 0.5)){
+          mask[cy * cols + cx] = 1;
+        }
+      }
+    }
+    return { cellSize: size, cols, rows, mask };
+  }
+
+  function ensureStressScenario(){
+    const hadColliders = customColliders.length > 0;
+    const hasNavGrid = !!(mapState.hitbox && mapState.hitbox.grid && mapState.hitbox.grid.mask && mapState.hitbox.grid.mask.length);
+    if(hadColliders || hasNavGrid){
+      return null;
+    }
+    const prev = {
+      mapWidth: mapState.width,
+      mapHeight: mapState.height,
+      mapLoaded: mapState.loaded,
+      colliders: customColliders.slice(),
+      nextId: mapState.colliders.nextId,
+      selectedId: mapState.colliders.selectedId,
+      spatial: mapState.colliders.spatial,
+      hitbox: {
+        loaded: mapState.hitbox.loaded,
+        width: mapState.hitbox.width,
+        height: mapState.hitbox.height,
+        data: mapState.hitbox.data,
+        coarse: mapState.hitbox.coarse,
+        grid: mapState.hitbox.grid
+      }
+    };
+    const width = prev.mapWidth || 5000;
+    const height = prev.mapHeight || 5000;
+    const generated = generateStressColliders(width, height);
+    customColliders.length = 0;
+    customColliders.push(...generated.colliders);
+    mapState.colliders.nextId = generated.nextId;
+    mapState.colliders.selectedId = null;
+    mapState.colliders.spatial = null;
+    mapState.width = width;
+    mapState.height = height;
+    mapState.loaded = true;
+    const navGrid = buildNavGridFromColliders(NAV_COARSE_CELL);
+    mapState.hitbox.grid = navGrid;
+    mapState.hitbox.coarse = navGrid;
+    mapState.hitbox.loaded = true;
+    mapState.hitbox.width = width;
+    mapState.hitbox.height = height;
+    clearAllNavigation(true);
+    refreshColliderList();
+    updatePerfPanel();
+    return ()=> {
+      customColliders.length = 0;
+      customColliders.push(...prev.colliders);
+      mapState.colliders.nextId = prev.nextId;
+      mapState.colliders.selectedId = prev.selectedId;
+      mapState.colliders.spatial = prev.spatial || null;
+      mapState.width = prev.mapWidth;
+      mapState.height = prev.mapHeight;
+      mapState.loaded = prev.mapLoaded;
+      mapState.hitbox.grid = prev.hitbox.grid;
+      mapState.hitbox.coarse = prev.hitbox.coarse;
+      mapState.hitbox.data = prev.hitbox.data;
+      mapState.hitbox.loaded = prev.hitbox.loaded;
+      mapState.hitbox.width = prev.hitbox.width;
+      mapState.hitbox.height = prev.hitbox.height;
+      clearAllNavigation(true);
+      refreshColliderList();
+      updatePerfPanel();
+    };
+  }
+
+  function ensureStressSpawns(durationMs = 30000){
+    if(minions.length || pendingSpawns.length){
+      return null;
+    }
+    ensureDefaultSpawns(true);
+    const plan = ensureLaneLayout();
+    const bluePaths = plan && plan.bluePaths ? plan.bluePaths.filter(Boolean) : [];
+    const redPaths = plan && plan.redPaths ? plan.redPaths.filter(Boolean) : [];
+    if(!bluePaths.length || !redPaths.length){
+      return null;
+    }
+    const prevWaveNumber = waveState.waveNumber;
+    const prevWaveCount = waveState.waveCount;
+    const prevTimerRunning = timerState.running;
+
+    const stressTotal = Math.max(20, waveState.waveCount || 20);
+    const stressLaneEmit = (side, paths)=>{
+      const { hp, dmg } = statsForWave(Math.max(1, waveState.waveNumber || 1));
+      const counts = distributeMinions(stressTotal, paths.length);
+      for(let laneIndex = 0; laneIndex < paths.length; laneIndex++){
+        const lanePath = paths[laneIndex];
+        const count = counts[laneIndex] || 0;
+        for(let i=0; i<count; i++){
+          const slotIndex = i % 5;
+          enqueueMinionSpawn(side, lanePath, hp, dmg, 0, slotIndex, laneIndex);
+        }
+      }
+    };
+
+    const spawnBurst = ()=>{
+      stressLaneEmit('blue', bluePaths);
+      stressLaneEmit('red', redPaths);
+      while(pendingSpawns.length){
+        const job = pendingSpawns.shift();
+        spawnFromQueue(job);
+      }
+      let flagged = 0;
+      const cap = 6;
+      for(const m of minions){
+        if(flagged >= cap) break;
+        m.stressNav = true;
+        m.nav = null;
+        flagged += 1;
+      }
+    };
+
+    const intervalMs = Math.max(4000, Math.min(8000, durationMs / 4));
+    const handle = setInterval(spawnBurst, intervalMs);
+    spawnBurst();
+
+    return ()=>{
+      clearInterval(handle);
+      minions.length = 0;
+      pendingSpawns.length = 0;
+      waveState.waveNumber = prevWaveNumber;
+      waveState.waveCount = prevWaveCount;
+      timerState.running = prevTimerRunning;
+    };
+  }
+
+  function ensureStressNavFlags(count = 6){
+    let flagged = 0;
+    for(const m of minions){
+      if(flagged >= count) break;
+      m.stressNav = true;
+      m.nav = null;
+      flagged += 1;
+    }
+    return flagged;
+  }
+
+  function runStressTest({ durationMs = 30000, sampleMs = 1000, autoSetup = true } = {}){
+    if(perfStressTestBtn){
+      perfStressTestBtn.disabled = true;
+    }
+    const cleanups = [];
+    if(autoSetup){
+      stressNavMode = true;
+      cleanups.push(()=>{ stressNavMode = false; });
+    }
+    const restoreStress = autoSetup ? ensureStressScenario() : null;
+    if(restoreStress) cleanups.push(restoreStress);
+    const restoreSpawns = autoSetup ? ensureStressSpawns(durationMs) : null;
+    if(restoreSpawns) cleanups.push(restoreSpawns);
+    if(autoSetup){
+      ensureStressNavFlags(6);
+    }
+    const logs = [];
+    const t0 = perfNow();
+    const sample = ()=>{
+      logs.push(buildPerfLog());
+      const elapsed = perfNow() - t0;
+      if(elapsed + sampleMs * 0.5 < durationMs){
+        setTimeout(sample, sampleMs);
+      } else {
+        const content = logs.join('\\n\\n');
+        const blob = new Blob([content], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `MakaGame-stress-${new Date().toISOString().replace(/[:.]/g,'-')}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        while(cleanups.length){
+          const fn = cleanups.pop();
+          if(typeof fn === 'function'){
+            fn();
+          }
+        }
+        if(perfStressTestBtn){
+          perfStressTestBtn.disabled = false;
+        }
+      }
+    };
+    sample();
+    const autoMsg = [];
+    if(restoreStress){ autoMsg.push('auto collision board'); }
+    if(restoreSpawns){ autoMsg.push('auto minion waves'); }
+    const msg = autoMsg.length
+      ? `Stress test running (${autoMsg.join(' + ')}, restoring after).`
+      : 'Stress test running (sampling perf)...';
+    setHudMessage(msg);
+  }
+
+  if(perfStressTestBtn){
+    perfStressTestBtn.addEventListener('click', ()=> runStressTest());
   }
 
   // CSS vars init + UI initialize
