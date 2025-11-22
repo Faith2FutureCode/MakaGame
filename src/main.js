@@ -57,6 +57,8 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const minimapCtx = minimapCanvas ? minimapCanvas.getContext('2d') : null;
   const MINIMAP_BASE_SIZE = 220;
   const MINIMAP_MARGIN = 16;
+  const MAX_MAP_DIMENSION = 6000;
+  const MAX_MAP_PIXELS = 36000000; // cap to ~36 MP to avoid huge canvases
   const settingsSearchOverlay = document.getElementById('settingsSearch');
   const settingsSearchInput = document.getElementById('settingsSearchInput');
   const settingsSearchResultsEl = document.getElementById('settingsSearchResults');
@@ -74,11 +76,21 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const events = createEventBus();
 
   const mapState = GameState.map;
+  mapState.artScale = Number.isFinite(mapState.artScale) ? mapState.artScale : 1;
   const stagePointerState = mapState.stagePointer;
   const minimapState = GameState.hud.minimap;
   const minions = GameState.minions;
   const pendingSpawns = GameState.spawns.pending;
   const laneConfigs = GameState.lanes.configs;
+  const laneDragState = (GameState.lanes.drag && typeof GameState.lanes.drag === 'object')
+    ? GameState.lanes.drag
+    : (GameState.lanes.drag = {});
+  const portalDragState = (GameState.spawns.drag && typeof GameState.spawns.drag === 'object')
+    ? GameState.spawns.drag
+    : (GameState.spawns.drag = {});
+  const turretDragState = (GameState.turrets.drag && typeof GameState.turrets.drag === 'object')
+    ? GameState.turrets.drag
+    : (GameState.turrets.drag = {});
   const cameraState = GameState.camera;
   const hudState = GameState.hud;
   hudState.playerFloat = normalizePlayerFloatState(hudState.playerFloat);
@@ -122,6 +134,15 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const TURRET_MAX_FOCUS = 5;
   const TURRET_MIN_OFFSET = -2000;
   const TURRET_MAX_OFFSET = 2000;
+  function darkenHex(color, amount = 0.25){
+    const base = sanitizeHexColor(color, '#5bc357');
+    const amt = Math.max(0, Math.min(1, amount));
+    const toChan = (hex)=> Math.max(0, Math.min(255, Math.round(parseInt(hex, 16) * (1 - amt))));
+    const r = toChan(base.slice(1,3)).toString(16).padStart(2, '0');
+    const g = toChan(base.slice(3,5)).toString(16).padStart(2, '0');
+    const b = toChan(base.slice(5,7)).toString(16).padStart(2, '0');
+    return `#${r}${g}${b}`;
+  }
   const turretState = normalizeTurretState(GameState.turrets);
   GameState.turrets = turretState;
   const playerFloatState = hudState.playerFloat;
@@ -200,6 +221,19 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   let minionDiameter = GameState.lanes.minion.diameter;
   let minionRadius = GameState.lanes.minion.radius;
   let laneFanSpacing = GameState.lanes.minion.fanSpacing;
+  laneDragState.dragging = false;
+  laneDragState.pointerId = null;
+  laneDragState.laneIndex = null;
+  laneDragState.breakIndex = null;
+  laneDragState.mode = null;
+  portalDragState.dragging = false;
+  portalDragState.pointerId = null;
+  portalDragState.side = null;
+  portalDragState.offsetX = 0;
+  portalDragState.offsetY = 0;
+  turretDragState.dragging = false;
+  turretDragState.pointerId = null;
+  turretDragState.turretId = null;
   let practiceDummyMoveButton;
   let practiceDummyResetButton;
   let practiceDummyRemoveButton;
@@ -573,6 +607,11 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     attack.height = toNumber(attack.height, defaults.attack.height);
     attack.offsetX = toNumber(attack.offsetX, defaults.attack.offsetX);
     attack.offsetY = toNumber(attack.offsetY, defaults.attack.offsetY);
+    if(typeof normalized.color !== 'string' || !normalized.color.trim()){
+      normalized.color = defaults.color;
+    } else {
+      normalized.color = sanitizeHexColor(normalized.color, defaults.color);
+    }
     const icons = normalized.icons && typeof normalized.icons === 'object' ? normalized.icons : {};
     normalized.icons = icons;
     icons.width = toNumber(icons.width, defaults.icons.width);
@@ -4966,12 +5005,15 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const hudStatDmg = document.getElementById('hudDmg');
   const hudStatMs = document.getElementById('hudMs');
   const playerFloatHud = document.getElementById('playerFloatHud');
+  const playerFloatTrack = document.getElementById('playerFloatTrack');
   const practiceDummyHud = document.getElementById('practiceDummyHud');
   const practiceDummyFill = document.getElementById('practiceDummyFill');
   const practiceDummyText = document.getElementById('practiceDummyText');
   const practiceDummyIcons = document.getElementById('practiceDummyIcons');
   const playerFloatFill = document.getElementById('playerFloatFill');
   const playerFloatText = document.getElementById('playerFloatText');
+  const playerHpBadge = document.getElementById('playerHpBadge');
+  const playerHpValue = document.getElementById('playerHpValue');
   const playerAttackReadyBar = document.getElementById('playerAttackReadyBar');
   const playerAttackReadyFill = document.getElementById('playerAttackReadyFill');
   const playerStateIcons = document.getElementById('playerStateIcons');
@@ -4986,6 +5028,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const playerFloatHeightDisplay = document.getElementById('playerFloatHeightDisplay');
   const playerFloatOffsetInput = document.getElementById('playerFloatOffset');
   const playerFloatOffsetDisplay = document.getElementById('playerFloatOffsetDisplay');
+  const playerHealthColorInput = document.getElementById('playerHealthColor');
   const playerAttackBarWidthInput = document.getElementById('playerAttackBarWidth');
   const playerAttackBarWidthDisplay = document.getElementById('playerAttackBarWidthDisplay');
   const playerAttackBarHeightInput = document.getElementById('playerAttackBarHeight');
@@ -5469,6 +5512,29 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     const pct = maxHp > 0 ? currentHp / maxHp : 0;
     const clampedPct = Math.max(0, Math.min(1, pct));
     const hudOrientation = abilityBarState.orientation === 'vertical' ? 'vertical' : 'horizontal';
+  if(playerFloatHud){
+    const segments = Math.max(0, Math.floor(maxHp / 100));
+    const showNotches = segments > 0 && currentHp >= 100;
+    if(showNotches){
+      const trackWidth = playerFloatTrack && playerFloatTrack.clientWidth
+        ? playerFloatTrack.clientWidth
+        : Math.max(1, Number(playerFloatState.width) || 1);
+      const usable = Math.max(4, trackWidth);
+      const spacing = usable / segments;
+      const notchWidth = Math.max(1, spacing * 0.12);
+      const notchMargin = Math.max(4, spacing * 0.65); // keep a clean gap from edges
+      const offset = spacing; // start at first 100hp mark inside margin
+      playerFloatHud.style.setProperty('--hp-notch-spacing', `${spacing}px`);
+      playerFloatHud.style.setProperty('--hp-notch-width', `${notchWidth}px`);
+      playerFloatHud.style.setProperty('--hp-notch-offset', `${offset}px`);
+      playerFloatHud.style.setProperty('--hp-notch-margin', `${notchMargin}px`);
+    } else {
+      playerFloatHud.style.removeProperty('--hp-notch-spacing');
+      playerFloatHud.style.removeProperty('--hp-notch-width');
+      playerFloatHud.style.removeProperty('--hp-notch-offset');
+      playerFloatHud.style.removeProperty('--hp-notch-margin');
+      }
+    }
     if(hudHpFill){
       if(hudOrientation === 'vertical'){
         hudHpFill.style.height = `${clampedPct * 100}%`;
@@ -5494,7 +5560,10 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       playerFloatFill.style.width = `${clampedPct * 100}%`;
     }
     if(playerFloatText){
-      playerFloatText.textContent = `${currentHp|0}`;
+      playerFloatText.textContent = '';
+    }
+    if(playerHpValue){
+      playerHpValue.textContent = `${currentHp|0}`;
     }
     if(playerFloatHud){
       const visible = maxHp > 0;
@@ -5583,6 +5652,9 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(playerFloatHud){
       playerFloatHud.style.setProperty('--player-float-width', String(playerFloatState.width));
       playerFloatHud.style.setProperty('--player-float-height', String(playerFloatState.height));
+      const hpColor = sanitizeHexColor(playerFloatState.color, '#5bc357');
+      playerFloatHud.style.setProperty('--player-float-color', hpColor);
+      playerFloatHud.style.setProperty('--player-float-color-dark', darkenHex(hpColor, 0.25));
       if(playerFloatState.attack){
         playerFloatHud.style.setProperty('--player-attack-width', String(playerFloatState.attack.width));
         playerFloatHud.style.setProperty('--player-attack-height', String(playerFloatState.attack.height));
@@ -14061,7 +14133,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     hitboxWidth:20,
     spellOriginLengthOffset:0,
     spellOriginWidthOffset:0,
-    speed:240,
+    speed: Number.isFinite(GameState.player.speed) ? GameState.player.speed : 1000,
     hp:1000,
     maxHp:1000,
     mp: Math.max(0, Number(GameState.player.mp) || 400),
@@ -15050,13 +15122,44 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return layer * sign;
   }
 
+  function defaultLaneBreaks(){
+    return [{ t: 0.33, offset: 0 }, { t: 0.66, offset: 0 }];
+  }
+  function sanitizeLaneBreaks(cfg){
+    if(!cfg || typeof cfg !== 'object'){
+      return defaultLaneBreaks();
+    }
+    let breaks = Array.isArray(cfg.breaks) ? cfg.breaks : null;
+    if(!breaks || !breaks.length){
+      breaks = defaultLaneBreaks();
+    }
+    breaks = breaks.map((b)=>{
+      const rawT = Number(b && b.t);
+      const rawOff = Number(b && b.offset);
+      const t = Math.max(0.05, Math.min(0.95, Number.isFinite(rawT) ? rawT : 0.5));
+      const offset = Math.max(-1, Math.min(1, Number.isFinite(rawOff) ? rawOff : 0));
+      return { t, offset };
+    });
+    breaks.sort((a, b) => a.t - b.t);
+    cfg.breaks = breaks;
+    return breaks;
+  }
+
   function ensureLaneConfigCount(count){
     const target = Math.max(1, Math.round(Number(count) || 1));
     while(laneConfigs.length < target){
-      laneConfigs.push({ offset: 0 });
+      laneConfigs.push({ offset: 0, breaks: defaultLaneBreaks() });
     }
     if(laneConfigs.length > target){
       laneConfigs.length = target;
+    }
+    for(let i=0;i<laneConfigs.length;i++){
+      const cfg = laneConfigs[i] || {};
+      if(!('offset' in cfg)){
+        cfg.offset = 0;
+      }
+      sanitizeLaneBreaks(cfg);
+      laneConfigs[i] = cfg;
     }
     return laneConfigs;
   }
@@ -15160,6 +15263,27 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
   }
 
+  function setLaneBreakpointNormalized(laneIndex, breakIndex, { t, offset }, { notify = true } = {}){
+    ensureLaneConfigCount(GameState.lanes.count);
+    if(laneIndex < 0 || laneIndex >= laneConfigs.length){
+      return;
+    }
+    const cfg = laneConfigs[laneIndex];
+    const breaks = sanitizeLaneBreaks(cfg);
+    const idx = Math.max(0, Math.min(breaks.length - 1, Math.round(Number(breakIndex) || 0)));
+    const safeT = Math.max(0.05, Math.min(0.95, Number.isFinite(t) ? t : breaks[idx].t));
+    const safeOffset = Math.max(-1, Math.min(1, Number.isFinite(offset) ? offset : breaks[idx].offset));
+    breaks[idx] = { t: safeT, offset: safeOffset };
+    breaks.sort((a, b) => a.t - b.t);
+    cfg.breaks = breaks;
+    if(notify){
+      invalidateLaneLayout({ resetMinions: true });
+    } else {
+      GameState.lanes.layoutDirty = true;
+      GameState.lanes.layout = null;
+    }
+  }
+
   function invalidateLaneLayout({ resetMinions = true } = {}){
     GameState.lanes.layoutDirty = true;
     GameState.lanes.layout = null;
@@ -15218,10 +15342,29 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         x: clampCoord(center.x + diagX * offset, mapState.width),
         y: clampCoord(center.y + diagY * offset, mapState.height)
       };
+      const breaks = sanitizeLaneBreaks(cfg).map((b, idx) => {
+        const offsetPx = Math.max(-maxOffset, Math.min(maxOffset, Number(b.offset) * maxOffset));
+        const tClamped = Math.max(0.05, Math.min(0.95, Number(b.t) || 0.5));
+        const baseX = start.x + dirX * laneLen * tClamped;
+        const baseY = start.y + dirY * laneLen * tClamped;
+        return {
+          x: clampCoord(baseX + diagX * offsetPx, mapState.width),
+          y: clampCoord(baseY + diagY * offsetPx, mapState.height),
+          t: tClamped,
+          offset: Math.max(-1, Math.min(1, Number(b.offset) || 0)),
+          index: idx
+        };
+      });
+      const anchors = [
+        { x: start.x, y: start.y, t: 0 },
+        ...breaks,
+        { x: middle.x, y: middle.y, t: 0.5 },
+        { x: end.x, y: end.y, t: 1 }
+      ].sort((a, b) => a.t - b.t);
       const label = String(i + 1);
-      const bluePath = buildLanePath(start, middle, end, i, label, version);
-      const redPath = buildLanePath(end, middle, start, i, label, version);
-      lanes.push({ index: i, label, middle, control: bluePath.control, bluePath, redPath });
+      const bluePath = buildLanePath(anchors, i, label, version, middle);
+      const redPath = buildLanePath([...anchors].reverse(), i, label, version, middle);
+      lanes.push({ index: i, label, middle, control: bluePath.control, bluePath, redPath, breaks });
     }
     return {
       version,
@@ -15232,22 +15375,203 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     };
   }
 
-  function buildLanePath(start, middle, end, laneIndex, label, version){
-    const startPoint = { x: start.x, y: start.y };
-    const endPoint = { x: end.x, y: end.y };
-    const middlePoint = { x: middle.x, y: middle.y };
-    const control = {
-      x: 2 * middlePoint.x - (startPoint.x + endPoint.x) / 2,
-      y: 2 * middlePoint.y - (startPoint.y + endPoint.y) / 2
-    };
-    const SAMPLES = 60;
-    const points = [];
-    for(let i=0; i<=SAMPLES; i++){
-      const t = i / SAMPLES;
-      const omt = 1 - t;
-      const x = omt * omt * startPoint.x + 2 * omt * t * control.x + t * t * endPoint.x;
-      const y = omt * omt * startPoint.y + 2 * omt * t * control.y + t * t * endPoint.y;
-      points.push({ x, y });
+  function laneHandleRadius(){
+    const total = Math.max(1, GameState.lanes.count || 1);
+    return Math.max(12, 20 - Math.max(0, total - 1));
+  }
+
+  function laneBreakHandleRadius(){
+    return Math.max(10, laneHandleRadius() - 2);
+  }
+
+  function portalHandleRadius(){
+    return Math.max(18, PORTAL_R * 2.2);
+  }
+
+  function hitTestLaneHandle(x, y){
+    const layout = ensureLaneLayout();
+    if(!layout || !layout.lanes || !layout.lanes.length){
+      return null;
+    }
+    const radius = laneHandleRadius();
+    const radiusSq = radius * radius;
+    for(const lane of layout.lanes){
+      if(!lane || !lane.middle) continue;
+      const dx = x - lane.middle.x;
+      const dy = y - lane.middle.y;
+      if(dx * dx + dy * dy <= radiusSq){
+        return { lane, layout };
+      }
+    }
+    return null;
+  }
+
+  function hitTestLaneBreak(x, y){
+    const layout = ensureLaneLayout();
+    if(!layout || !layout.lanes || !layout.lanes.length){
+      return null;
+    }
+    const radius = laneBreakHandleRadius();
+    const radiusSq = radius * radius;
+    for(const lane of layout.lanes){
+      if(!lane || !Array.isArray(lane.breaks)) continue;
+      for(const bp of lane.breaks){
+        if(!bp) continue;
+        const dx = x - bp.x;
+        const dy = y - bp.y;
+        if(dx * dx + dy * dy <= radiusSq){
+          return { lane, breakIndex: bp.index, layout };
+        }
+      }
+    }
+    return null;
+  }
+
+  function applyLaneHandleDrag(lane, layout, x, y){
+    if(!lane || !layout || !lane.bluePath || !lane.bluePath.from || !lane.bluePath.to){
+      return;
+    }
+    const start = lane.bluePath.from;
+    const end = lane.bluePath.to;
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const normX = dy / len;
+    const normY = -dx / len;
+    const centerX = (start.x + end.x) / 2;
+    const centerY = (start.y + end.y) / 2;
+    const rawOffset = (x - centerX) * normX + (y - centerY) * normY;
+    const maxOffset = (layout && layout.maxOffset) || Math.min(len * 0.35, Math.max(mapState.width, mapState.height) * 0.4);
+    if(!(maxOffset > 0)){
+      return;
+    }
+    const clampedOffset = Math.max(-maxOffset, Math.min(maxOffset, rawOffset));
+    const baseNorm = GameState.lanes.count > 1 ? (-1 + (2 * lane.index) / (GameState.lanes.count - 1)) : 0;
+    const userNorm = Math.max(-1, Math.min(1, clampedOffset / maxOffset - baseNorm));
+    setLaneOffsetNormalized(lane.index, userNorm, { syncInput: true, notify: false });
+    ensureLaneLayout();
+    renderMinimap(true);
+  }
+
+  function applyLaneBreakDrag(lane, layout, breakIndex, x, y){
+    if(!lane || !layout || !lane.bluePath || !lane.bluePath.from || !lane.bluePath.to){
+      return;
+    }
+    const start = lane.bluePath.from;
+    const end = lane.bluePath.to;
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const dirX = dx / len;
+    const dirY = dy / len;
+    const normX = dirY;
+    const normY = -dirX;
+    const relX = x - start.x;
+    const relY = y - start.y;
+    const proj = relX * dirX + relY * dirY;
+    const t = Math.max(0.05, Math.min(0.95, proj / len));
+    const rawOffset = relX * normX + relY * normY;
+    const maxOffset = (layout && layout.maxOffset) || Math.min(len * 0.35, Math.max(mapState.width, mapState.height) * 0.4);
+    const offsetNorm = maxOffset > 0 ? Math.max(-1, Math.min(1, rawOffset / maxOffset)) : 0;
+    setLaneBreakpointNormalized(lane.index, breakIndex, { t, offset: offsetNorm }, { notify: false });
+    ensureLaneLayout();
+    renderMinimap(true);
+  }
+
+  function hitTestPortal(x, y){
+    const radius = portalHandleRadius();
+    const radiusSq = radius * radius;
+    if(blueSpawns[0]){
+      const dx = x - blueSpawns[0].x;
+      const dy = y - blueSpawns[0].y;
+      if(dx * dx + dy * dy <= radiusSq){
+        return { side: 'blue', spawn: blueSpawns[0] };
+      }
+    }
+    if(redSpawns[0]){
+      const dx = x - redSpawns[0].x;
+      const dy = y - redSpawns[0].y;
+      if(dx * dx + dy * dy <= radiusSq){
+        return { side: 'red', spawn: redSpawns[0] };
+      }
+    }
+    return null;
+  }
+
+  function applyPortalDrag(side, x, y, { finalize = false } = {}){
+    const list = side === 'red' ? redSpawns : blueSpawns;
+    if(!list || !list[0]) return;
+    const spawn = list[0];
+    const clampCoord = (value, max) => Math.max(0, Math.min(max, Number.isFinite(value) ? value : 0));
+    spawn.x = clampCoord(x, mapState.width);
+    spawn.y = clampCoord(y, mapState.height);
+    spawn.userPlaced = true;
+    GameState.lanes.layoutDirty = true;
+    markTurretsDirty();
+    ensureLaneLayout();
+    renderMinimap(true);
+    if(finalize){
+      invalidateLaneLayout({ resetMinions: false });
+    }
+  }
+
+  function findTurretById(id){
+    const list = ensureTurrets();
+    return list.find(t => t && t.id === id) || null;
+  }
+
+  function hitTestTurret(x, y){
+    const list = ensureTurrets();
+    if(!list.length) return null;
+    const bodyRadius = Math.max(12, minionRadius + 6);
+    const radiusSq = (bodyRadius + 6) * (bodyRadius + 6);
+    for(const turret of list){
+      if(!turret) continue;
+      const dx = x - turret.x;
+      const dy = y - turret.y;
+      if(dx * dx + dy * dy <= radiusSq){
+        return turret;
+      }
+    }
+    return null;
+  }
+
+  function applyTurretDrag(turret, x, y, { finalize = false } = {}){
+    if(!turret) return;
+    const perLane = clampTurretCount(turretState.perLane);
+    ensureTurretOffsetsCount(perLane);
+    const fractions = turretProgressFractions(perLane);
+    const baseT = fractions[turret.slot] ?? 0.25;
+    const layout = ensureLaneLayout();
+    const lane = layout && Array.isArray(layout.lanes) ? layout.lanes.find(l => l && l.index === turret.laneIndex) : null;
+    const path = lane ? (turret.side === 'red' ? lane.redPath : lane.bluePath) : null;
+    const pathLen = path ? path.totalLength || 0 : 0;
+    if(!path || !(pathLen > 0)){
+      return;
+    }
+    const sample = lanePointAtDistance(path, pathLen * baseT);
+    if(!sample || !sample.point){
+      return;
+    }
+    const offsetX = clampTurretOffset(x - sample.point.x);
+    const offsetY = clampTurretOffset(y - sample.point.y);
+    turretState.offsets[turret.slot] = { x: offsetX, y: offsetY };
+    turretState.hasCustomOffsets = true;
+    markTurretsDirty();
+    ensureTurrets();
+    renderMinimap(true);
+    if(finalize){
+      updateTurretOffsetControls();
+    }
+  }
+
+  function buildLanePath(anchors, laneIndex, label, version, middlePoint){
+    const points = Array.isArray(anchors) ? anchors.map(p => ({ x: p.x, y: p.y })) : [];
+    if(!points.length && middlePoint){
+      points.push({ x: middlePoint.x, y: middlePoint.y });
+    }
+    if(!points.length){
+      points.push({ x: 0, y: 0 });
     }
     const segments = [];
     let totalLength = 0;
@@ -15275,11 +15599,16 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       });
       totalLength += length;
     }
+    const startPoint = points[0];
+    const endPoint = points[points.length - 1];
+    const middleResolved = middlePoint || points[Math.floor(points.length / 2)] || startPoint;
+    const control = middleResolved;
     return {
       from: startPoint,
       to: endPoint,
-      middle: middlePoint,
+      middle: middleResolved,
       control,
+      points,
       segments,
       totalLength,
       label,
@@ -15998,6 +16327,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     updateCamera(true, 0, { force: true });
     renderMinimap(true);
   }
+  let pendingMapArtSize = null;
   function markFileLoaded(el, loaded){ if(el) el.classList.toggle('loaded', !!loaded); }
   function invalidateHitbox(message){
     GameState.map.hitbox.loaded = false;
@@ -16055,21 +16385,97 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   }
   function ensureHitboxMatchesArt(){
     if(mapState.hitbox.loaded && (mapState.hitbox.width !== mapState.width || mapState.hitbox.height !== mapState.height)){
-      invalidateHitbox('Hitbox cleared Ã¢â‚¬â€œ size mismatch. Please upload matching hitbox map.');
+      invalidateHitbox('Hitbox cleared - size mismatch. Please upload matching hitbox map.');
     }
   }
-  function useArtImage(src, name){ img.src = src; if (name) fileName.textContent = name; }
+  function clampMapDimensions(width, height){
+    const rawWidth = Math.max(0, Number(width) || 0);
+    const rawHeight = Math.max(0, Number(height) || 0);
+    const basePixels = rawWidth * rawHeight;
+    let scale = 1;
+    if(rawWidth > MAX_MAP_DIMENSION){
+      scale = Math.min(scale, MAX_MAP_DIMENSION / rawWidth);
+    }
+    if(rawHeight > MAX_MAP_DIMENSION){
+      scale = Math.min(scale, MAX_MAP_DIMENSION / rawHeight);
+    }
+    if(basePixels > MAX_MAP_PIXELS && basePixels > 0){
+      scale = Math.min(scale, Math.sqrt(MAX_MAP_PIXELS / basePixels));
+    }
+    if(!(scale < 1)){
+      return { width: rawWidth, height: rawHeight, clamped: false, scale: 1 };
+    }
+    const w = Math.max(1, Math.floor(rawWidth * scale));
+    const h = Math.max(1, Math.floor(rawHeight * scale));
+    return { width: w, height: h, clamped: true, scale };
+  }
+  function resetMapArtProcessing(){
+    pendingMapArtSize = null;
+    mapState.artScale = 1;
+    if(img){
+      delete img.dataset.safeScaled;
+      img.removeAttribute('width');
+      img.removeAttribute('height');
+    }
+  }
+  function buildSafeMapImage(image, rawWidth, rawHeight){
+    const { width: safeWidth, height: safeHeight, clamped, scale } = clampMapDimensions(rawWidth, rawHeight);
+    if(!clamped || !(safeWidth > 0) || !(safeHeight > 0) || !image) return null;
+    try{
+      const c = document.createElement('canvas');
+      c.width = safeWidth;
+      c.height = safeHeight;
+      const cctx = c.getContext('2d');
+      if(!cctx) return null;
+      cctx.drawImage(image, 0, 0, safeWidth, safeHeight);
+      const dataUrl = c.toDataURL('image/png');
+      return { dataUrl, safeWidth, safeHeight, scale };
+    } catch(err){
+      console.error('Map downscale failed', err);
+      return null;
+    }
+  }
+  function useArtImage(src, name){
+    resetMapArtProcessing();
+    if (name) fileName.textContent = name;
+    img.src = src;
+  }
   img.addEventListener('load', ()=>{
-    const nextWidth = img.naturalWidth || mapState.width;
-    const nextHeight = img.naturalHeight || mapState.height;
-    mapState.width = nextWidth;
-    mapState.height = nextHeight;
+    const logicalWidth = (pendingMapArtSize && pendingMapArtSize.width) || img.naturalWidth || mapState.width || 0;
+    const logicalHeight = (pendingMapArtSize && pendingMapArtSize.height) || img.naturalHeight || mapState.height || 0;
+    const alreadyScaled = img.dataset.safeScaled === 'true';
+
+    if(!alreadyScaled){
+      const resized = buildSafeMapImage(img, logicalWidth, logicalHeight);
+      if(resized && resized.dataUrl){
+        pendingMapArtSize = { width: logicalWidth, height: logicalHeight, scale: resized.scale };
+        img.dataset.safeScaled = 'true';
+        img.src = resized.dataUrl;
+        img.width = logicalWidth;
+        img.height = logicalHeight;
+        mapState.artScale = resized.scale;
+        if(typeof setHudMessage === 'function'){
+          setHudMessage(`Map downscaled for performance: ${logicalWidth}x${logicalHeight} -> ${resized.safeWidth}x${resized.safeHeight}. World size unchanged.`);
+        }
+        return;
+      }
+      mapState.artScale = 1;
+    }
+
+    mapState.width = logicalWidth;
+    mapState.height = logicalHeight;
+    if(!Number.isFinite(mapState.artScale)){
+      mapState.artScale = (pendingMapArtSize && pendingMapArtSize.scale) || 1;
+    }
+    img.width = logicalWidth;
+    img.height = logicalHeight;
     setVars();
     mapState.loaded = !!img.src;
     markFileLoaded(fileNameWrap, mapState.loaded);
     clearAllNavigation(true);
     ensureHitboxMatchesArt();
     ensureDefaultSpawns(true);
+    pendingMapArtSize = null;
   });
   img.addEventListener('error', ()=>{
     mapState.loaded = false;
@@ -16091,7 +16497,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     GameState.map.hitbox.loaded = false;
     markFileLoaded(hitboxNameWrap, false);
     GameState.map.hitbox.displayName = f.name || '';
-    if(hitboxName) hitboxName.textContent = GameState.map.hitbox.displayName || 'Loading hitbox mapÃ¢â‚¬Â¦';
+    if(hitboxName) hitboxName.textContent = GameState.map.hitbox.displayName || 'Loading hitbox map...';
     r.onload=()=>{ hitboxImg.src = r.result; };
     r.readAsDataURL(f);
     e.target.value = '';
@@ -18322,6 +18728,23 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     playerFloatHeightInput.addEventListener('input', handleFloatHeightChange);
     handleFloatHeightChange();
   }
+  if(playerHealthColorInput){
+    const applyColor = ()=>{
+      const color = sanitizeHexColor(playerHealthColorInput.value, playerFloatState.color || '#5bc357');
+      playerFloatState.color = color;
+      if(playerFloatHud){
+        playerFloatHud.style.setProperty('--player-float-color', color);
+        playerFloatHud.style.setProperty('--player-float-color-dark', darkenHex(color, 0.25));
+      }
+    };
+    playerHealthColorInput.value = sanitizeHexColor(playerFloatState.color || '#5bc357', '#5bc357');
+    playerHealthColorInput.addEventListener('input', applyColor);
+    applyColor();
+  } else if(playerFloatHud){
+    const color = sanitizeHexColor(playerFloatState.color || '#5bc357', '#5bc357');
+    playerFloatHud.style.setProperty('--player-float-color', color);
+    playerFloatHud.style.setProperty('--player-float-color-dark', darkenHex(color, 0.25));
+  }
   if(practiceDummySizeInput){
     const handlePracticeSizeChange = ()=>{
       const size = clampPracticeDummySize(practiceDummySizeInput.value, practiceDummy.size);
@@ -19830,7 +20253,9 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(mapState.loaded && img && img.naturalWidth && img.naturalHeight){
       minimapCtx.save();
       minimapCtx.globalAlpha = 0.9;
-      minimapCtx.drawImage(img, 0, 0, mapState.width, mapState.height, 0, 0, width, height);
+      const sourceWidth = img.naturalWidth || mapState.width;
+      const sourceHeight = img.naturalHeight || mapState.height;
+      minimapCtx.drawImage(img, 0, 0, sourceWidth, sourceHeight, 0, 0, width, height);
       minimapCtx.restore();
     }
     const scaleX = width / mapState.width;
@@ -20049,12 +20474,17 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       minimapCtx.strokeStyle = '#32d97c';
       minimapCtx.lineCap = 'round';
       for(const lane of lanePlanMinimap.lanes){
-        const start = lane.bluePath.from;
-        const end = lane.bluePath.to;
-        minimapCtx.beginPath();
-        minimapCtx.moveTo(start.x * scaleX, start.y * scaleY);
-        minimapCtx.quadraticCurveTo(lane.control.x * scaleX, lane.control.y * scaleY, end.x * scaleX, end.y * scaleY);
-        minimapCtx.stroke();
+        const points = (lane.bluePath && Array.isArray(lane.bluePath.points) && lane.bluePath.points.length > 1)
+          ? lane.bluePath.points
+          : [lane.bluePath.from, lane.bluePath.to];
+        if(points && points.length > 1){
+          minimapCtx.beginPath();
+          minimapCtx.moveTo(points[0].x * scaleX, points[0].y * scaleY);
+          for(let i=1;i<points.length;i++){
+            minimapCtx.lineTo(points[i].x * scaleX, points[i].y * scaleY);
+          }
+          minimapCtx.stroke();
+        }
 
         const midX = lane.middle.x * scaleX;
         const midY = lane.middle.y * scaleY;
@@ -20071,6 +20501,19 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         minimapCtx.textAlign = 'center';
         minimapCtx.textBaseline = 'middle';
         minimapCtx.fillText(lane.label, midX, midY + Math.max(0.5, scale * 0.8));
+
+        if(Array.isArray(lane.breaks) && lane.breaks.length){
+          const breakRadius = Math.max(4, 10 * scale);
+          for(const bp of lane.breaks){
+            minimapCtx.beginPath();
+            minimapCtx.arc(bp.x * scaleX, bp.y * scaleY, breakRadius, 0, Math.PI * 2);
+            minimapCtx.fillStyle = '#0f3621';
+            minimapCtx.fill();
+            minimapCtx.lineWidth = Math.max(1.4, 2.5 * scale);
+            minimapCtx.strokeStyle = '#32d97c';
+            minimapCtx.stroke();
+          }
+        }
       }
       minimapCtx.restore();
     }
@@ -20285,6 +20728,64 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     abilityRuntime.activePointerId = null;
   }
 
+  function stopLaneDrag({ finalize = true } = {}){
+    if(!laneDragState.dragging){
+      return;
+    }
+    const pointerId = laneDragState.pointerId;
+    laneDragState.dragging = false;
+    laneDragState.pointerId = null;
+    const laneIndex = laneDragState.laneIndex;
+    laneDragState.breakIndex = null;
+    laneDragState.mode = null;
+    laneDragState.laneIndex = null;
+    if(stage && Number.isFinite(pointerId)){
+      try { stage.releasePointerCapture(pointerId); } catch (err) { /* ignore */ }
+    }
+    if(finalize && Number.isInteger(laneIndex) && laneIndex >= 0){
+      invalidateLaneLayout({ resetMinions: true });
+    }
+  }
+
+  function stopPortalDrag({ finalize = true } = {}){
+    if(!portalDragState.dragging){
+      return;
+    }
+    const pointerId = portalDragState.pointerId;
+    const side = portalDragState.side;
+    portalDragState.dragging = false;
+    portalDragState.pointerId = null;
+    portalDragState.side = null;
+    portalDragState.offsetX = 0;
+    portalDragState.offsetY = 0;
+    if(stage && Number.isFinite(pointerId)){
+      try { stage.releasePointerCapture(pointerId); } catch (err) { /* ignore */ }
+    }
+    if(finalize && side){
+      invalidateLaneLayout({ resetMinions: false });
+    }
+  }
+
+  function stopTurretDrag({ finalize = true } = {}){
+    if(!turretDragState.dragging){
+      return;
+    }
+    const pointerId = turretDragState.pointerId;
+    const turretId = turretDragState.turretId;
+    turretDragState.dragging = false;
+    turretDragState.pointerId = null;
+    turretDragState.turretId = null;
+    if(stage && Number.isFinite(pointerId)){
+      try { stage.releasePointerCapture(pointerId); } catch (err) { /* ignore */ }
+    }
+    if(finalize && Number.isInteger(turretId)){
+      const turret = findTurretById(turretId);
+      if(turret){
+        applyTurretDrag(turret, turret.x, turret.y, { finalize: true });
+      }
+    }
+  }
+
   // Clicks
   stage.addEventListener('pointerdown', (e)=>{
     updateStagePointerState(e);
@@ -20321,6 +20822,70 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       beginMonsterDrag(pointerId, x, y);
       if(stage && monsterDragState.pointerId !== null){
         try { stage.setPointerCapture(monsterDragState.pointerId); } catch (err) { /* ignore */ }
+      }
+      return;
+    }
+
+    if(!GameState.spawns.placing){
+      const portalHit = hitTestPortal(x, y);
+      if(portalHit){
+        e.preventDefault();
+        stopStagePointerOrdering();
+        portalDragState.dragging = true;
+        portalDragState.pointerId = pointerId;
+        portalDragState.side = portalHit.side;
+        portalDragState.offsetX = portalHit.spawn.x - x;
+        portalDragState.offsetY = portalHit.spawn.y - y;
+        applyPortalDrag(portalHit.side, x + portalDragState.offsetX, y + portalDragState.offsetY, { finalize: false });
+        if(stage && portalDragState.pointerId !== null){
+          try { stage.setPointerCapture(portalDragState.pointerId); } catch (err) { /* ignore */ }
+        }
+        return;
+      }
+    }
+
+    const turretHit = hitTestTurret(x, y);
+    if(turretHit){
+      e.preventDefault();
+      stopStagePointerOrdering();
+      turretDragState.dragging = true;
+      turretDragState.pointerId = pointerId;
+      turretDragState.turretId = turretHit.id;
+      applyTurretDrag(turretHit, x, y, { finalize: false });
+      if(stage && turretDragState.pointerId !== null){
+        try { stage.setPointerCapture(turretDragState.pointerId); } catch (err) { /* ignore */ }
+      }
+      return;
+    }
+
+    const laneBreakHit = hitTestLaneBreak(x, y);
+    if(laneBreakHit && laneBreakHit.lane){
+      e.preventDefault();
+      stopStagePointerOrdering();
+      laneDragState.dragging = true;
+      laneDragState.pointerId = pointerId;
+      laneDragState.laneIndex = laneBreakHit.lane.index;
+      laneDragState.breakIndex = laneBreakHit.breakIndex;
+      laneDragState.mode = 'break';
+      applyLaneBreakDrag(laneBreakHit.lane, laneBreakHit.layout, laneBreakHit.breakIndex, x, y);
+      if(stage && laneDragState.pointerId !== null){
+        try { stage.setPointerCapture(laneDragState.pointerId); } catch (err) { /* ignore */ }
+      }
+      return;
+    }
+
+    const laneHit = hitTestLaneHandle(x, y);
+    if(laneHit && laneHit.lane){
+      e.preventDefault();
+      stopStagePointerOrdering();
+      laneDragState.dragging = true;
+      laneDragState.pointerId = pointerId;
+      laneDragState.laneIndex = laneHit.lane.index;
+      laneDragState.breakIndex = null;
+      laneDragState.mode = 'middle';
+      applyLaneHandleDrag(laneHit.lane, laneHit.layout, x, y);
+      if(stage && laneDragState.pointerId !== null){
+        try { stage.setPointerCapture(laneDragState.pointerId); } catch (err) { /* ignore */ }
       }
       return;
     }
@@ -20526,6 +21091,38 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       updateMonsterDragPosition(x, y);
       return;
     }
+    if(portalDragState.dragging && (portalDragState.pointerId === null || portalDragState.pointerId === e.pointerId)){
+      clearHoverTarget();
+      e.preventDefault();
+      const side = portalDragState.side;
+      if(side){
+        applyPortalDrag(side, x + portalDragState.offsetX, y + portalDragState.offsetY, { finalize: false });
+      }
+      return;
+    }
+    if(turretDragState.dragging && (turretDragState.pointerId === null || turretDragState.pointerId === e.pointerId)){
+      clearHoverTarget();
+      e.preventDefault();
+      const turret = findTurretById(turretDragState.turretId);
+      if(turret){
+        applyTurretDrag(turret, x, y, { finalize: false });
+      }
+      return;
+    }
+    if(laneDragState.dragging && (laneDragState.pointerId === null || laneDragState.pointerId === e.pointerId)){
+      clearHoverTarget();
+      e.preventDefault();
+      const layout = ensureLaneLayout();
+      const lane = layout && Array.isArray(layout.lanes) ? layout.lanes.find(l => l && l.index === laneDragState.laneIndex) : null;
+      if(lane){
+        if(laneDragState.mode === 'break' && Number.isInteger(laneDragState.breakIndex)){
+          applyLaneBreakDrag(lane, layout, laneDragState.breakIndex, x, y);
+        } else {
+          applyLaneHandleDrag(lane, layout, x, y);
+        }
+      }
+      return;
+    }
     if(practiceDummyState.dragging && (practiceDummyState.pointerId === null || practiceDummyState.pointerId === e.pointerId)){
       clearHoverTarget();
       e.preventDefault();
@@ -20584,6 +21181,18 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   });
   stage.addEventListener('pointerup', (e) => {
     updateStagePointerState(e);
+    if(portalDragState.dragging && (portalDragState.pointerId === null || portalDragState.pointerId === e.pointerId)){
+      stopPortalDrag({ finalize: true });
+      return;
+    }
+    if(turretDragState.dragging && (turretDragState.pointerId === null || turretDragState.pointerId === e.pointerId)){
+      stopTurretDrag({ finalize: true });
+      return;
+    }
+    if(laneDragState.dragging && (laneDragState.pointerId === null || laneDragState.pointerId === e.pointerId)){
+      stopLaneDrag({ finalize: true });
+      return;
+    }
     if(monsterDragState.dragging && (monsterDragState.pointerId === null || monsterDragState.pointerId === e.pointerId)){
       endMonsterDrag({ commit: true });
       return;
@@ -20638,6 +21247,14 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   });
   stage.addEventListener('pointercancel', (e) => {
     updateStagePointerState(e);
+    if(portalDragState.dragging && (portalDragState.pointerId === null || portalDragState.pointerId === e.pointerId)){
+      stopPortalDrag({ finalize: true });
+      return;
+    }
+    if(turretDragState.dragging && (turretDragState.pointerId === null || turretDragState.pointerId === e.pointerId)){
+      stopTurretDrag({ finalize: true });
+      return;
+    }
     if(monsterDragState.dragging && (monsterDragState.pointerId === null || monsterDragState.pointerId === e.pointerId)){
       cancelMonsterDrag();
       return;
@@ -20681,6 +21298,18 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   });
   stage.addEventListener('lostpointercapture', (e) => {
     updateStagePointerState(e);
+    if(portalDragState.dragging && (portalDragState.pointerId === null || portalDragState.pointerId === e.pointerId)){
+      stopPortalDrag({ finalize: true });
+      return;
+    }
+    if(turretDragState.dragging && (turretDragState.pointerId === null || turretDragState.pointerId === e.pointerId)){
+      stopTurretDrag({ finalize: true });
+      return;
+    }
+    if(laneDragState.dragging && (laneDragState.pointerId === null || laneDragState.pointerId === e.pointerId)){
+      stopLaneDrag({ finalize: true });
+      return;
+    }
     if(monsterDragState.dragging && (monsterDragState.pointerId === null || monsterDragState.pointerId === e.pointerId)){
       cancelMonsterDrag();
       return;
@@ -20762,10 +21391,19 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
   }, { passive: false });
   stage.addEventListener('pointerenter', (e) => updateStagePointerState(e));
-  stage.addEventListener('pointerleave', () => {
+  stage.addEventListener('pointerleave', (e) => {
     stagePointerState.inside = false;
     clearHoverTarget();
     refreshStageCursor();
+    if(portalDragState.dragging && (portalDragState.pointerId === null || portalDragState.pointerId === (e && e.pointerId))){
+      stopPortalDrag({ finalize: true });
+    }
+    if(turretDragState.dragging && (turretDragState.pointerId === null || turretDragState.pointerId === (e && e.pointerId))){
+      stopTurretDrag({ finalize: true });
+    }
+    if(laneDragState.dragging && (laneDragState.pointerId === null || laneDragState.pointerId === (e && e.pointerId))){
+      stopLaneDrag();
+    }
     if(GameState.map.colliders.editMode){
       stopColliderDrag();
       GameState.map.colliders.placing = false;
@@ -20778,6 +21416,15 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     stagePointerState.inside = false;
     clearHoverTarget();
     refreshStageCursor();
+    if(portalDragState.dragging && (portalDragState.pointerId === null || portalDragState.pointerId === e.pointerId)){
+      stopPortalDrag({ finalize: true });
+    }
+    if(turretDragState.dragging && (turretDragState.pointerId === null || turretDragState.pointerId === e.pointerId)){
+      stopTurretDrag({ finalize: true });
+    }
+    if(laneDragState.dragging && (laneDragState.pointerId === null || laneDragState.pointerId === e.pointerId)){
+      stopLaneDrag();
+    }
     if(GameState.map.colliders.editMode){
       if(GameState.map.colliders.pointerId === null || GameState.map.colliders.pointerId === e.pointerId){
         if(GameState.map.colliders.dragMoved){
@@ -20796,6 +21443,15 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     stagePointerState.inside = false;
     clearHoverTarget();
     refreshStageCursor();
+    if(portalDragState.dragging && (portalDragState.pointerId === null || portalDragState.pointerId === e.pointerId)){
+      stopPortalDrag({ finalize: true });
+    }
+    if(turretDragState.dragging && (turretDragState.pointerId === null || turretDragState.pointerId === e.pointerId)){
+      stopTurretDrag({ finalize: true });
+    }
+    if(laneDragState.dragging && (laneDragState.pointerId === null || laneDragState.pointerId === e.pointerId)){
+      stopLaneDrag();
+    }
     if(GameState.map.colliders.editMode){
       stopColliderDrag();
       GameState.map.colliders.placing = false;
@@ -22842,12 +23498,17 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       const laneTotal = lanePlanForDraw.lanes.length;
       const baseRadius = Math.max(12, 20 - Math.max(0, laneTotal - 1));
       for(const lane of lanePlanForDraw.lanes){
-        const start = lane.bluePath.from;
-        const end = lane.bluePath.to;
-        ctx.beginPath();
-        ctx.moveTo(start.x, start.y);
-        ctx.quadraticCurveTo(lane.control.x, lane.control.y, end.x, end.y);
-        ctx.stroke();
+        const points = (lane.bluePath && Array.isArray(lane.bluePath.points) && lane.bluePath.points.length > 1)
+          ? lane.bluePath.points
+          : [lane.bluePath.from, lane.bluePath.to];
+        if(points && points.length > 1){
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, points[0].y);
+          for(let i=1;i<points.length;i++){
+            ctx.lineTo(points[i].x, points[i].y);
+          }
+          ctx.stroke();
+        }
 
         const radius = baseRadius;
         ctx.beginPath();
@@ -22862,6 +23523,20 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(lane.label, lane.middle.x, lane.middle.y + 1);
+
+        if(Array.isArray(lane.breaks) && lane.breaks.length){
+          const breakRadius = Math.max(9, radius - 5);
+          for(const bp of lane.breaks){
+            if(!bp) continue;
+            ctx.beginPath();
+            ctx.arc(bp.x, bp.y, breakRadius, 0, Math.PI * 2);
+            ctx.fillStyle = '#0f3621';
+            ctx.fill();
+            ctx.lineWidth = 2.2;
+            ctx.strokeStyle = '#32d97c';
+            ctx.stroke();
+          }
+        }
       }
       ctx.restore();
     } else if(blueSpawns[0] && redSpawns[0]){

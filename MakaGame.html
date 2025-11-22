@@ -735,9 +735,14 @@
     }
     .goldCounter { background:#0b1220cc; border:1px solid #2a3756; border-radius:12px; padding:8px 12px; font-weight:700; letter-spacing:0.5px; display:flex; align-items:center; gap:6px; }
 
-    .playerFloatHud {
+.playerFloatHud {
       --player-float-width: 120;
       --player-float-height: 18;
+      --player-float-color: #5bc357;
+      --hp-notch-spacing: 14px;
+      --hp-notch-offset: 0px;
+      --hp-notch-width: 1px;
+      --hp-notch-margin: 0px;
       --player-attack-width: var(--player-float-width);
       --player-attack-height: 6;
       --player-attack-offset-x: 0;
@@ -758,6 +763,31 @@
       opacity:1;
       transition:opacity 0.2s ease;
     }
+.playerHpBadge {
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:4px;
+      font-size:11px;
+      font-weight:700;
+      color:#f0fbff;
+      text-shadow:
+        -1px 0 1px rgba(0,0,0,0.8),
+        1px 0 1px rgba(0,0,0,0.8),
+        0 -1px 1px rgba(0,0,0,0.8),
+        0 1px 1px rgba(0,0,0,0.8);
+      padding:1px 6px;
+      background:rgba(0,0,0,0.45);
+      border-radius:999px;
+      margin-bottom:2px;
+    }
+    .playerHpBadge .hpIcon {
+      font-size:12px;
+      line-height:1;
+    }
+    .playerHpBadge .hpValue {
+      line-height:1;
+    }
     .playerModelAnchor {
       position:absolute;
       transform:translate(-50%, -100%);
@@ -775,11 +805,15 @@
       position:relative;
       width:100%;
       height:calc(var(--player-float-height, 18) * 1px);
-      border-radius:999px;
-      background:rgba(10,16,28,0.8);
-      border:1px solid rgba(28,56,86,0.8);
+      border-radius:6px;
+      background:#04070b;
+      border:1px solid #5a616a;
       overflow:hidden;
-      box-shadow:0 4px 10px rgba(0,0,0,0.4);
+      box-shadow:
+        0 0 0 1px #0a0a0a,
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        inset 0 -1px 0 rgba(0,0,0,0.65),
+        0 4px 10px rgba(0,0,0,0.4);
       display:flex;
       align-items:center;
       justify-content:center;
@@ -789,23 +823,51 @@
       position:absolute;
       inset:0;
       width:100%;
-      background:linear-gradient(90deg, #4dff9e, #1ec4ff);
+      background:linear-gradient(
+        to bottom,
+        var(--player-float-color, #5bc357) 0%,
+        var(--player-float-color, #5bc357) 30%,
+        var(--player-float-color-dark, #3a8c39) 70%,
+        var(--player-float-color-dark, #3a8c39) 100%
+      );
       transition:width 0.15s ease;
       z-index:0;
+      border-radius:4px;
+      border:1px solid #0a0a0a;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.18),
+        inset 0 -1px 0 rgba(0,0,0,0.55),
+        0 0 0 1px #0a0a0a;
     }
-    .playerFloatHud[data-team="red"] .playerFloatFill {
-      background:linear-gradient(90deg, #ff6f91, #ffb36b);
+    .playerFloatFill::before {
+      content:"";
+      position:absolute;
+      inset:1px 1px auto 1px;
+      height:50%;
+      background:linear-gradient(to bottom, rgba(255,255,255,0.2), rgba(255,255,255,0));
+      pointer-events:none;
+    }
+    .playerFloatFill::after {
+      content:"";
+      position:absolute;
+      left:var(--hp-notch-margin, 0px);
+      right:var(--hp-notch-margin, 0px);
+      top:2px;
+      height:40%;
+      background-image: linear-gradient(
+        to right,
+        rgba(0,0,0,0.32) 0,
+        rgba(0,0,0,0.32) var(--hp-notch-width, 1px),
+        transparent var(--hp-notch-width, 1px),
+        transparent 100%
+      );
+      background-size: var(--hp-notch-spacing, 14px) 100%;
+      background-repeat: repeat-x;
+      background-position: var(--hp-notch-offset, 0px) 0;
+      pointer-events:none;
     }
     .playerFloatText {
-      position:relative;
-      z-index:1;
-      font-size:11px;
-      font-weight:600;
-      color:#f0fbff;
-      text-shadow:0 1px 3px rgba(0,0,0,0.8);
-      letter-spacing:0.3px;
-      line-height:1;
-      pointer-events:none;
+      display:none;
     }
 
     .playerAttackReadyBar {
@@ -1797,7 +1859,7 @@
         <div class="submenu" id="playerPane">
           <div class="formrow"><label>Configuration</label><div class="rangeWrap"><button class="formButton" id="playerConfigLoad" type="button">Load setup</button><button class="formButton" id="playerConfigSave" type="button">Save setup</button></div></div>
           <input id="playerConfigFile" type="file" accept="application/json,.json" style="display:none" />
-          <div class="formrow"><label for="playerSpeed">Movement speed (px/s, 1â€“1000)</label><input type="number" id="playerSpeed" min="1" max="1000" value="240"></div>
+          <div class="formrow"><label for="playerSpeed">Movement speed (px/s, 1â€“1000)</label><input type="number" id="playerSpeed" min="1" max="1000" value="1000"></div>
           <div class="formrow"><label for="playerSize">Player size (px, 0â€“1000)</label><input type="number" id="playerSize" min="0" max="1000" value="10"></div>
           <div class="formrow"><label for="playerTeam">Team</label><select id="playerTeam"><option value="blue">Blue</option><option value="red">Red</option></select></div>
           <div class="formrow"><label for="playerHitboxToggle">Player hitbox</label><button class="formButton" id="playerHitboxToggle" type="button">Hide hitbox</button></div>
@@ -1836,6 +1898,7 @@
           <div class="formrow rangeRow"><label for="playerFloatSize">Health bar width</label><div class="rangeWrap"><input type="number" id="playerFloatSize" min="0" max="10000" value="120"><span class="rangeValue" id="playerFloatSizeDisplay">120px</span></div></div>
           <div class="formrow rangeRow"><label for="playerFloatHeight">Health bar height</label><div class="rangeWrap"><input type="number" id="playerFloatHeight" min="0" max="500" value="18"><span class="rangeValue" id="playerFloatHeightDisplay">18px</span></div></div>
           <div class="formrow rangeRow"><label for="playerFloatOffset">Health bar overhead space</label><div class="rangeWrap"><input type="number" id="playerFloatOffset" min="0" max="10000" value="18"><span class="rangeValue" id="playerFloatOffsetDisplay">18px</span></div></div>
+          <div class="formrow"><label for="playerHealthColor">Health color</label><input type="color" id="playerHealthColor" value="#5bc357"></div>
           <div class="subhint">Auto attack readiness bar</div>
           <div class="formrow rangeRow"><label for="playerAttackBarWidth">Bar width</label><div class="rangeWrap"><input type="number" id="playerAttackBarWidth" min="0" max="10000" value="120"><span class="rangeValue" id="playerAttackBarWidthDisplay">120px</span></div></div>
           <div class="formrow rangeRow"><label for="playerAttackBarHeight">Bar height</label><div class="rangeWrap"><input type="number" id="playerAttackBarHeight" min="0" max="500" value="6"><span class="rangeValue" id="playerAttackBarHeightDisplay">6px</span></div></div>
@@ -2331,10 +2394,11 @@
             <canvas id="playerModelCanvas" class="playerModelCanvas" width="256" height="256"></canvas>
           </div>
           <div class="playerFloatHud" id="playerFloatHud" data-team="blue" aria-hidden="true">
+            <div class="playerHpBadge" id="playerHpBadge"><span class="hpIcon">❤️</span><span class="hpValue" id="playerHpValue">1000</span></div>
             <div class="playerPrayerIcons" id="playerPrayerIcons" aria-hidden="true"></div>
-            <div class="playerFloatTrack">
+            <div class="playerFloatTrack" id="playerFloatTrack">
               <div class="playerFloatFill" id="playerFloatFill"></div>
-              <div class="playerFloatText" id="playerFloatText">1000</div>
+              <div class="playerFloatText" id="playerFloatText" aria-hidden="true"></div>
             </div>
             <div class="playerAttackReadyBar is-disabled" id="playerAttackReadyBar" aria-hidden="true">
               <div class="playerAttackReadyFill" id="playerAttackReadyFill"></div>
@@ -2487,5 +2551,6 @@
     <script type="module" src="./src/main.js"></script>
 </body>
 </html>
+
 
 

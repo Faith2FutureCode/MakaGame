@@ -222,16 +222,17 @@ export const PLAYER_STATUS_DEFS = [
     normalized.lastTargetCount = Math.max(0, Number(normalized.lastTargetCount) || 0);
     return normalized;
   }
-  export function createDefaultPlayerFloatState(){
-    return {
-      width: 120,
-      gap: 18,
-      height: 18,
-      attack: { width: 120, height: 6, offsetX: 0, offsetY: 0 },
-      icons: { width: 24, height: 24, offsetX: 12, offsetY: 0 },
-      statuses: buildDefaultPlayerStatusConfig()
-    };
-  }
+export function createDefaultPlayerFloatState(){
+  return {
+    width: 120,
+    gap: 18,
+    height: 18,
+    color: '#5bc357',
+    attack: { width: 120, height: 6, offsetX: 0, offsetY: 0 },
+    icons: { width: 24, height: 24, offsetX: 12, offsetY: 0 },
+    statuses: buildDefaultPlayerStatusConfig()
+  };
+}
 
   export function createDefaultPracticeDummy(overrides){
     const dummy = {
