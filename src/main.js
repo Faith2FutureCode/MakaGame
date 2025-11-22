@@ -438,6 +438,56 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(!Number.isFinite(numeric)) numeric = fallback;
     return Math.max(SETTINGS_RANGE_MIN, Math.min(SETTINGS_RANGE_MAX, numeric));
   }
+  function playerCollisionRadius(){
+    return Math.max(0, Number(player.r) || 0);
+  }
+  function getPlayerHurtboxDims(){
+    const shape = typeof player.hurtboxShape === 'string' ? player.hurtboxShape : 'capsule';
+    const length = Math.max(0, Number(player.hurtboxLength) || 0);
+    const width = Math.max(0, Number(player.hurtboxWidth) || 0);
+    return { shape, length, width };
+  }
+  function getPlayerHurtRadius(){
+    const { length, width } = getPlayerHurtboxDims();
+    const inferred = Math.max(width > 0 ? width / 2 : 0, length > 0 ? length / 2 : 0);
+    return Math.max(1, inferred || playerCollisionRadius());
+  }
+  function setPlayerHurtboxShape(value){
+    const shape = value === 'circle' ? 'circle' : (value === 'rectangle' ? 'rectangle' : 'capsule');
+    player.hurtboxShape = shape;
+    if(playerHurtboxShapeSelect){
+      playerHurtboxShapeSelect.value = shape;
+    }
+    return shape;
+  }
+  function setPlayerHurtboxLength(value){
+    const clampMin = 0;
+    const clampMax = SETTINGS_RANGE_MAX;
+    let length = clampSettingValue(value, clampMin);
+    length = Math.min(clampMax, Math.max(clampMin, length));
+    player.hurtboxLength = length;
+    if(playerHurtboxLengthInput){
+      playerHurtboxLengthInput.value = String(length);
+    }
+    if(playerHurtboxLengthDisplay){
+      playerHurtboxLengthDisplay.textContent = `${Math.round(length)}px`;
+    }
+    return length;
+  }
+  function setPlayerHurtboxWidth(value){
+    const clampMin = 0;
+    const clampMax = SETTINGS_RANGE_MAX;
+    let width = clampSettingValue(value, clampMin);
+    width = Math.min(clampMax, Math.max(clampMin, width));
+    player.hurtboxWidth = width;
+    if(playerHurtboxWidthInput){
+      playerHurtboxWidthInput.value = String(width);
+    }
+    if(playerHurtboxWidthDisplay){
+      playerHurtboxWidthDisplay.textContent = `${Math.round(width)}px`;
+    }
+    return width;
+  }
   function clampTurretCount(value){
     const numeric = Math.floor(Number(value));
     if(!Number.isFinite(numeric)) return 0;
@@ -4703,6 +4753,12 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const playerHitboxWidthInput = document.getElementById('playerHitboxWidth');
   const playerHitboxWidthDisplay = document.getElementById('playerHitboxWidthDisplay');
   const playerHitboxShapeSelect = document.getElementById('playerHitboxShape');
+  const playerHurtboxToggleButton = document.getElementById('playerHurtboxToggle');
+  const playerHurtboxShapeSelect = document.getElementById('playerHurtboxShape');
+  const playerHurtboxLengthInput = document.getElementById('playerHurtboxLength');
+  const playerHurtboxLengthDisplay = document.getElementById('playerHurtboxLengthDisplay');
+  const playerHurtboxWidthInput = document.getElementById('playerHurtboxWidth');
+  const playerHurtboxWidthDisplay = document.getElementById('playerHurtboxWidthDisplay');
   const playerSpellOriginLengthInput = document.getElementById('playerSpellOriginLength');
   const playerSpellOriginLengthDisplay = document.getElementById('playerSpellOriginLengthDisplay');
   const playerSpellOriginWidthInput = document.getElementById('playerSpellOriginWidth');
@@ -13993,6 +14049,10 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     x: mapState.width / 2,
     y: mapState.height / 2,
     r:10,
+    hurtboxVisible: GameState.player.hurtboxVisible !== false,
+    hurtboxShape: GameState.player.hurtboxShape || 'capsule',
+    hurtboxLength: Number.isFinite(GameState.player.hurtboxLength) ? GameState.player.hurtboxLength : 32,
+    hurtboxWidth: Number.isFinite(GameState.player.hurtboxWidth) ? GameState.player.hurtboxWidth : 20,
     color:'#2aa9ff',
     team:'blue',
     hitboxVisible:true,
@@ -14064,6 +14124,10 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   player.recall.interruptReason = typeof player.recall.interruptReason === 'string'
     ? player.recall.interruptReason
     : null;
+  player.hurtboxVisible = player.hurtboxVisible !== false;
+  player.hurtboxShape = typeof player.hurtboxShape === 'string' ? player.hurtboxShape : 'capsule';
+  player.hurtboxLength = Number.isFinite(player.hurtboxLength) ? player.hurtboxLength : 32;
+  player.hurtboxWidth = Number.isFinite(player.hurtboxWidth) ? player.hurtboxWidth : 20;
   normalizePlayerControlState(player);
   normalizePracticeDummyState();
   camera.followX = player.x;
@@ -18148,6 +18212,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     updateHudStats();
   });
   playerSizeInput.addEventListener('input', ()=>{
+    const prevSize = Number(player.r) || 0;
     const size = clamp(playerSizeInput.value,0,1000);
     playerSizeInput.value = String(size);
     player.r = size;
@@ -18159,7 +18224,40 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(playerRuntime.model){
       playerRuntime.model.setPlayerRadius(size);
     }
+    const approxHurtLen = player.hurtboxLength || (prevSize * 2);
+    const approxHurtWid = player.hurtboxWidth || (prevSize * 2);
+    if(Math.abs(approxHurtLen - prevSize * 2) < 1e-3){
+      setPlayerHurtboxLength(size * 2);
+    }
+    if(Math.abs(approxHurtWid - prevSize * 2) < 1e-3){
+      setPlayerHurtboxWidth(size * 2);
+    }
   });
+  if(playerHurtboxToggleButton){
+    const updateHurtToggle = ()=>{
+      const visible = player.hurtboxVisible !== false;
+      playerHurtboxToggleButton.textContent = visible ? 'Hide hurtbox' : 'Show hurtbox';
+    };
+    playerHurtboxToggleButton.addEventListener('click', ()=>{
+      player.hurtboxVisible = !player.hurtboxVisible;
+      updateHurtToggle();
+    });
+    updateHurtToggle();
+  }
+  if(playerHurtboxShapeSelect){
+    playerHurtboxShapeSelect.value = setPlayerHurtboxShape(player.hurtboxShape);
+    playerHurtboxShapeSelect.addEventListener('change', ()=> setPlayerHurtboxShape(playerHurtboxShapeSelect.value));
+  }
+  if(playerHurtboxLengthInput){
+    const syncHurtLength = ()=> setPlayerHurtboxLength(playerHurtboxLengthInput.value);
+    syncHurtLength();
+    playerHurtboxLengthInput.addEventListener('input', syncHurtLength);
+  }
+  if(playerHurtboxWidthInput){
+    const syncHurtWidth = ()=> setPlayerHurtboxWidth(playerHurtboxWidthInput.value);
+    syncHurtWidth();
+    playerHurtboxWidthInput.addEventListener('input', syncHurtWidth);
+  }
   if(playerTeamSelect){
     playerTeamSelect.addEventListener('change', ()=>{
       setPlayerTeam(playerTeamSelect.value);
@@ -19108,7 +19206,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(!turretList.length){
       return;
     }
-    const playerRadius = Math.max(6, Number(player.r) || 0);
+    const playerRadius = Math.max(6, getPlayerHurtRadius());
     for(const turret of turretList){
       if(!turret || turret.side !== defenderSide){
         continue;
@@ -19133,7 +19231,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       return false;
     }
     const range = Math.max(0, Number(turret.range) || 0);
-    const padding = target === player ? Math.max(6, Number(player.r) || 0) : minionRadius;
+    const padding = target === player ? Math.max(6, getPlayerHurtRadius()) : minionRadius;
     const dx = target.x - turret.x;
     const dy = target.y - turret.y;
     const effective = range + padding;
@@ -19186,7 +19284,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       return;
     }
     const focusDefault = clampTurretFocus(turretState.playerFocusSeconds);
-    const playerRadius = Math.max(6, Number(player.r) || 0);
+    const playerRadius = Math.max(6, getPlayerHurtRadius());
     for(const turret of turretList){
       if(!turret){
         continue;
@@ -21934,12 +22032,18 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
 
     const showHitbox = player.hitboxVisible !== false;
+    const showHurtbox = player.hurtboxVisible !== false;
     const hasRuntimeModel = playerRuntime.model && playerRuntime.model.isActive();
     const hitboxLengthRaw = Number(player.hitboxLength);
     const hitboxWidthRaw = Number(player.hitboxWidth);
     const hitboxLength = Number.isFinite(hitboxLengthRaw) ? Math.max(0, hitboxLengthRaw) : 0;
     const hitboxWidth = Number.isFinite(hitboxWidthRaw) ? Math.max(0, hitboxWidthRaw) : 0;
     const hitboxShape = typeof player.hitboxShape === 'string' ? player.hitboxShape : 'capsule';
+    const hurtboxLengthRaw = Number(player.hurtboxLength);
+    const hurtboxWidthRaw = Number(player.hurtboxWidth);
+    const hurtboxLength = Number.isFinite(hurtboxLengthRaw) ? Math.max(0, hurtboxLengthRaw) : hitboxLength;
+    const hurtboxWidth = Number.isFinite(hurtboxWidthRaw) ? Math.max(0, hurtboxWidthRaw) : hitboxWidth;
+    const hurtboxShape = typeof player.hurtboxShape === 'string' ? player.hurtboxShape : hitboxShape;
     const playerRadius = Math.max(0, Number(player.r) || 0);
     if(showHitbox && (hitboxLength > 0 || hitboxWidth > 0)){
       ctx.save();
@@ -22021,6 +22125,36 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       ctx.lineTo(origin.x, origin.y + 10);
       ctx.strokeStyle = '#ffe27a88';
       ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
+    if(showHurtbox && (hurtboxLength > 0 || hurtboxWidth > 0)){
+      ctx.save();
+      ctx.beginPath();
+      if(hurtboxShape === 'rectangle'){
+        const halfLength = hurtboxLength > 0 ? hurtboxLength / 2 : 0;
+        const halfWidth = hurtboxWidth > 0 ? hurtboxWidth / 2 : 0;
+        ctx.rect(player.x - halfWidth, player.y - halfLength, halfWidth * 2, halfLength * 2);
+      } else if(hurtboxShape === 'circle'){
+        const diameter = hurtboxWidth > 0 ? hurtboxWidth : (hurtboxLength > 0 ? hurtboxLength : playerRadius * 2);
+        const radius = Math.max(1, diameter / 2);
+        ctx.arc(player.x, player.y, radius, 0, Math.PI * 2);
+      } else {
+        const halfWidth = hurtboxWidth > 0 ? hurtboxWidth / 2 : Math.max(playerRadius, hurtboxLength / 2);
+        const radius = Math.max(1, halfWidth);
+        const halfLength = hurtboxLength > 0 ? hurtboxLength / 2 : Math.max(radius, playerRadius * 2);
+        const bodyHalf = Math.max(0, halfLength - radius);
+        if(bodyHalf <= 0){
+          ctx.arc(player.x, player.y, radius, 0, Math.PI * 2);
+        } else {
+          ctx.arc(player.x, player.y - bodyHalf, radius, Math.PI, 0);
+          ctx.arc(player.x, player.y + bodyHalf, radius, 0, Math.PI);
+          ctx.closePath();
+        }
+      }
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 6]);
+      ctx.strokeStyle = '#7fe3ffaa';
       ctx.stroke();
       ctx.restore();
     }
@@ -22175,7 +22309,8 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       }
 
       const canConsiderPlayer = player && player.team !== m.side && Number.isFinite(player.hp) && player.hp > 0;
-      const playerRadius = Math.max(0, Number(player.r) || 0);
+      const playerHitR = getPlayerHurtRadius();
+      const playerCollR = playerCollisionRadius();
       let playerDistance = Infinity;
       if(canConsiderPlayer){
         playerDistance = Math.hypot(player.x - m.x, player.y - m.y);
@@ -22184,7 +22319,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       const engagedWithMinion = targetMinion && best <= attackRange;
       const hasNearbyEnemyMinions = targetMinion && best <= MINION_PLAYER_AGGRO_RANGE;
       const shouldChasePlayer = canConsiderPlayer && !engagedWithMinion && playerDistance <= MINION_PLAYER_AGGRO_RANGE;
-      const canAttackPlayer = shouldChasePlayer && playerDistance <= (attackRange + playerRadius);
+      const canAttackPlayer = shouldChasePlayer && playerDistance <= (attackRange + playerHitR);
       const enemyPresence = hasNearbyEnemyMinions || shouldChasePlayer;
       const laneFree = !enemyPresence;
 
@@ -22237,7 +22372,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
           const damage = Math.max(0, Number(m.dmg) || 0);
           if(damage > 0){
             damagePlayer(damage);
-            separateMinionFromPlayer(m, playerDistance, playerRadius);
+            separateMinionFromPlayer(m, playerDistance, playerCollR);
           }
           m.cd = MINION_ATTACK_COOLDOWN;
         }
@@ -22410,7 +22545,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
           const distToPlayer = playerDistance;
           const dot = distToPlayer ? (tx*nx + ty*ny) / distToPlayer : 0;
           if(dot > 0.5){
-            const buffer = minionRadius + playerRadius;
+            const buffer = minionRadius + playerCollR;
             const maxAdvance = distToPlayer - buffer;
             if(maxAdvance <= 0){
               step = 0;
@@ -22445,7 +22580,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
               } else if(chasingPlayer && lanePath){
                 const playerProj = projectPointOntoLane(lanePath, player.x, player.y);
                 if(playerProj && playerProj.distance >= proj){
-                  const chaseLimit = Math.min(laneLength, playerProj.distance - (minionDiameter + playerRadius));
+                  const chaseLimit = Math.min(laneLength, playerProj.distance - (minionDiameter + playerCollR));
                   maxProj = Math.max(proj, chaseLimit);
                 }
               }
@@ -22489,7 +22624,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
                 const py = player.y - m.spawn.y;
                 const playerProj = px * m.laneDir.x + py * m.laneDir.y;
                 if(Number.isFinite(playerProj) && playerProj >= proj){
-                  const chaseLimit = Math.min(laneLength, playerProj - (minionDiameter + playerRadius));
+                  const chaseLimit = Math.min(laneLength, playerProj - (minionDiameter + playerCollR));
                   maxProj = Math.max(proj, chaseLimit);
                 }
               }

@@ -306,6 +306,10 @@ export const PLAYER_STATUS_DEFS = [
     bases: { blue: null, red: null },
     player: {
       facingRadians: 0,
+      hurtboxVisible: true,
+      hurtboxShape: 'capsule',
+      hurtboxLength: 32,
+      hurtboxWidth: 20,
       vision: {
         radius: 900,
         sources: [],
