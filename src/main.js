@@ -15276,6 +15276,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     breaks[idx] = { t: safeT, offset: safeOffset };
     breaks.sort((a, b) => a.t - b.t);
     cfg.breaks = breaks;
+    cfg.manualBreaks = true;
     if(notify){
       invalidateLaneLayout({ resetMinions: true });
     } else {
@@ -15342,7 +15343,15 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         x: clampCoord(center.x + diagX * offset, mapState.width),
         y: clampCoord(center.y + diagY * offset, mapState.height)
       };
-      const breaks = sanitizeLaneBreaks(cfg).map((b, idx) => {
+      const rawBreaks = sanitizeLaneBreaks(cfg);
+      const useAutoCurve = !cfg.manualBreaks && rawBreaks.every(b => Math.abs(b.offset) < 1e-4);
+      const breaksSource = useAutoCurve
+        ? [
+            { t: 0.25, offset: finalNorm * 0.6 },
+            { t: 0.75, offset: finalNorm * 0.6 }
+          ]
+        : rawBreaks;
+      const breaks = breaksSource.map((b, idx) => {
         const offsetPx = Math.max(-maxOffset, Math.min(maxOffset, Number(b.offset) * maxOffset));
         const tClamped = Math.max(0.05, Math.min(0.95, Number(b.t) || 0.5));
         const baseX = start.x + dirX * laneLen * tClamped;
