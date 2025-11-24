@@ -15169,6 +15169,16 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(pct === 0) return '0%';
     return pct > 0 ? `+${pct}%` : `${pct}%`;
   }
+  function formatLaneDistanceDisplay(index){
+    const layout = ensureLaneLayout();
+    const lane = layout && Array.isArray(layout.lanes) ? layout.lanes[index] : null;
+    const startToMid = lane && lane.distances ? lane.distances.startToMid : null;
+    const endToMid = lane && lane.distances ? lane.distances.endToMid : null;
+    if(Number.isFinite(startToMid) && Number.isFinite(endToMid)){
+      return `${Math.round(startToMid)}px / ${Math.round(endToMid)}px to mid`;
+    }
+    return '--';
+  }
 
   function setLaneCount(value, { syncInput = true, notify = true } = {}){
     let numeric = Number(value);
@@ -15218,13 +15228,35 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       display.className = 'rangeValue';
       display.id = `laneOffsetDisplay${i + 1}`;
       display.textContent = formatLaneOffsetDisplay(laneConfigs[i].offset || 0);
+      const distance = document.createElement('span');
+      distance.className = 'laneDistanceNote';
+      distance.id = `laneDistance${i + 1}`;
+      distance.textContent = formatLaneDistanceDisplay(i);
+      const normalizeBtn = document.createElement('button');
+      normalizeBtn.type = 'button';
+      normalizeBtn.className = 'formButton laneNormalizeBtn';
+      normalizeBtn.textContent = 'Normalize';
+      normalizeBtn.addEventListener('click', ()=>{
+        normalizeLaneLengths(i);
+      });
+      const addBreakBtn = document.createElement('button');
+      addBreakBtn.type = 'button';
+      addBreakBtn.className = 'formButton laneAddBreakBtn';
+      addBreakBtn.textContent = 'Add break';
+      addBreakBtn.addEventListener('click', ()=>{
+        addLaneBreak(i);
+      });
       input.addEventListener('input', ()=>{
         const normalized = (Number(input.value) || 0) / 100;
         setLaneOffsetNormalized(i, normalized, { syncInput: false, notify: true });
         display.textContent = formatLaneOffsetDisplay(laneConfigs[i].offset || 0);
+        updateLaneDistanceDisplays();
       });
       wrap.appendChild(input);
       wrap.appendChild(display);
+      wrap.appendChild(distance);
+      wrap.appendChild(normalizeBtn);
+      wrap.appendChild(addBreakBtn);
       row.appendChild(label);
       row.appendChild(wrap);
       laneOffsetList.appendChild(row);
@@ -15257,6 +15289,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
     if(notify){
       invalidateLaneLayout({ resetMinions: true });
+      updateLaneDistanceDisplays();
     } else {
       GameState.lanes.layoutDirty = true;
       GameState.lanes.layout = null;
@@ -15279,6 +15312,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     cfg.manualBreaks = true;
     if(notify){
       invalidateLaneLayout({ resetMinions: true });
+      updateLaneDistanceDisplays();
     } else {
       GameState.lanes.layoutDirty = true;
       GameState.lanes.layout = null;
@@ -15310,6 +15344,19 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     GameState.lanes.layout = buildLaneLayout();
     GameState.lanes.layoutDirty = false;
     return GameState.lanes.layout;
+  }
+
+  function updateLaneDistanceDisplays(){
+    if(!laneOffsetList){
+      return;
+    }
+    const layout = ensureLaneLayout();
+    for(let i=0;i<(GameState.lanes.count || 0);i++){
+      const el = document.getElementById(`laneDistance${i + 1}`);
+      if(el){
+        el.textContent = formatLaneDistanceDisplay(i);
+      }
+    }
   }
 
   function buildLaneLayout(){
@@ -15373,7 +15420,24 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       const label = String(i + 1);
       const bluePath = buildLanePath(anchors, i, label, version, middle);
       const redPath = buildLanePath([...anchors].reverse(), i, label, version, middle);
-      lanes.push({ index: i, label, middle, control: bluePath.control, bluePath, redPath, breaks });
+      let totalLength = 0;
+      let lengthToMid = 0;
+      const midIndex = anchors.findIndex(a => Math.abs(a.t - 0.5) < 1e-6);
+      for(let j=0;j<anchors.length - 1;j++){
+        const a = anchors[j];
+        const b = anchors[j + 1];
+        const segLen = Math.hypot((b.x ?? 0) - (a.x ?? 0), (b.y ?? 0) - (a.y ?? 0));
+        totalLength += segLen;
+        if(j < midIndex){
+          lengthToMid += segLen;
+        }
+      }
+      const distances = {
+        startToMid: lengthToMid,
+        endToMid: Math.max(0, totalLength - lengthToMid),
+        total: totalLength
+      };
+      lanes.push({ index: i, label, middle, control: bluePath.control, bluePath, redPath, breaks, distances });
     }
     return {
       version,
@@ -15460,6 +15524,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     setLaneOffsetNormalized(lane.index, userNorm, { syncInput: true, notify: false });
     ensureLaneLayout();
     renderMinimap(true);
+    updateLaneDistanceDisplays();
   }
 
   function applyLaneBreakDrag(lane, layout, breakIndex, x, y){
@@ -15485,6 +15550,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     setLaneBreakpointNormalized(lane.index, breakIndex, { t, offset: offsetNorm }, { notify: false });
     ensureLaneLayout();
     renderMinimap(true);
+    updateLaneDistanceDisplays();
   }
 
   function hitTestPortal(x, y){
@@ -22696,6 +22762,23 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       }
     }
 
+    // Simple player marker circle.
+    const renderPlayerCircle = ()=>{
+      const radius = Math.max(6, Number(player.r) || 12);
+      if(!circleInCamera(player.x, player.y, radius + 6)) return;
+      const baseColor = typeof player.color === 'string' ? player.color : '#7fe3ff';
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = baseColor;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#05121a';
+      ctx.stroke();
+      ctx.restore();
+    };
+    renderPlayerCircle();
+
     const showHitbox = player.hitboxVisible !== false;
     const showHurtbox = player.hurtboxVisible !== false;
     const hasRuntimeModel = playerRuntime.model && playerRuntime.model.isActive();
@@ -23948,3 +24031,125 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
 
 
 
+  function normalizeLaneLengths(laneIndex){
+    ensureLaneConfigCount(GameState.lanes.count);
+    if(laneIndex < 0 || laneIndex >= laneConfigs.length){
+      return;
+    }
+    const startBlue = blueSpawns[0];
+    const startRed = redSpawns[0];
+    if(!startBlue || !startRed){
+      return;
+    }
+    const cfg = laneConfigs[laneIndex];
+    const mapStateWidth = mapState.width;
+    const mapStateHeight = mapState.height;
+    const clampCoord = (value, max) => Math.max(0, Math.min(max, value));
+    const start = { x: startBlue.x, y: startBlue.y };
+    const end = { x: startRed.x, y: startRed.y };
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const laneLen = Math.hypot(dx, dy) || 1;
+    const dirX = dx / laneLen;
+    const dirY = dy / laneLen;
+    const diagX = dirY;
+    const diagY = -dirX;
+    const maxOffset = Math.min(laneLen * 0.35, Math.max(mapStateWidth, mapStateHeight) * 0.4);
+    const center = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    const baseNorm = GameState.lanes.count > 1 ? (-1 + (2 * laneIndex) / (GameState.lanes.count - 1)) : 0;
+    const userNorm = Math.max(-1, Math.min(1, Number(cfg.offset) || 0));
+    const finalNorm = Math.max(-1, Math.min(1, baseNorm + userNorm));
+    const offset = finalNorm * maxOffset;
+    const middle = {
+      x: clampCoord(center.x + diagX * offset, mapStateWidth),
+      y: clampCoord(center.y + diagY * offset, mapStateHeight)
+    };
+    const breaks = sanitizeLaneBreaks(cfg).map((b)=>{
+      const offsetPx = Math.max(-maxOffset, Math.min(maxOffset, Number(b.offset) * maxOffset));
+      const tClamped = Math.max(0.05, Math.min(0.95, Number(b.t) || 0.5));
+      const baseX = start.x + dirX * laneLen * tClamped;
+      const baseY = start.y + dirY * laneLen * tClamped;
+      return {
+        x: clampCoord(baseX + diagX * offsetPx, mapStateWidth),
+        y: clampCoord(baseY + diagY * offsetPx, mapStateHeight),
+        t: tClamped,
+        offset: Math.max(-1, Math.min(1, Number(b.offset) || 0))
+      };
+    }).sort((a, b)=>a.t - b.t);
+    const anchors = [
+      { x: start.x, y: start.y, t: 0 },
+      ...breaks,
+      { x: middle.x, y: middle.y, t: 0.5 },
+      { x: end.x, y: end.y, t: 1 }
+    ].sort((a, b) => a.t - b.t);
+    const calcLengths = (pts)=>{
+      let total = 0;
+      let pre = 0;
+      const midIdx = pts.findIndex(p => Math.abs(p.t - 0.5) < 1e-6);
+      for(let i=0;i<pts.length - 1;i++){
+        const a = pts[i];
+        const b = pts[i + 1];
+        const seg = Math.hypot((b.x ?? 0) - (a.x ?? 0), (b.y ?? 0) - (a.y ?? 0));
+        total += seg;
+        if(i < midIdx){
+          pre += seg;
+        }
+      }
+      return { total, pre, post: total - pre };
+    };
+    let working = breaks;
+    for(let iter=0; iter<4; iter++){
+      const anchorsIter = [
+        { x: start.x, y: start.y, t: 0 },
+        ...working,
+        { x: middle.x, y: middle.y, t: 0.5 },
+        { x: end.x, y: end.y, t: 1 }
+      ].sort((a, b) => a.t - b.t);
+      const lengths = calcLengths(anchorsIter);
+      if(!(lengths.total > 0)) break;
+      const targetHalf = lengths.total / 2;
+      if(Math.abs(lengths.pre - targetHalf) < 0.5 && Math.abs(lengths.post - targetHalf) < 0.5){
+        break;
+      }
+      const factorPre = lengths.pre > 0 ? Math.min(5, Math.max(0.1, targetHalf / lengths.pre)) : 1;
+      const factorPost = lengths.post > 0 ? Math.min(5, Math.max(0.1, targetHalf / lengths.post)) : 1;
+      working = working.map((b)=>{
+        if(b.t < 0.5){
+          return { ...b, t: Math.max(0.05, Math.min(0.49, b.t * factorPre)) };
+        }
+        return { ...b, t: Math.min(0.95, Math.max(0.51, 1 - (1 - b.t) * factorPost)) };
+      }).sort((a, b)=>a.t - b.t);
+    }
+    cfg.breaks = working;
+    cfg.manualBreaks = true;
+    invalidateLaneLayout({ resetMinions: true });
+    updateLaneDistanceDisplays();
+    updateLaneOffsetControls();
+  }
+
+  function addLaneBreak(laneIndex){
+    ensureLaneConfigCount(GameState.lanes.count);
+    if(laneIndex < 0 || laneIndex >= laneConfigs.length){
+      return;
+    }
+    const cfg = laneConfigs[laneIndex];
+    const breaks = sanitizeLaneBreaks(cfg);
+    const points = [0, ...breaks.map(b => Math.max(0.05, Math.min(0.95, Number(b.t) || 0.5))), 1].sort((a, b) => a - b);
+    let bestGap = 0;
+    let insertT = 0.5;
+    for(let i=0;i<points.length - 1;i++){
+      const gap = points[i + 1] - points[i];
+      if(gap > bestGap){
+        bestGap = gap;
+        insertT = points[i] + gap / 2;
+      }
+    }
+    const clampedT = Math.max(0.05, Math.min(0.95, insertT));
+    breaks.push({ t: clampedT, offset: 0 });
+    breaks.sort((a, b) => a.t - b.t);
+    cfg.breaks = breaks;
+    cfg.manualBreaks = true;
+    invalidateLaneLayout({ resetMinions: true });
+    updateLaneDistanceDisplays();
+    updateLaneOffsetControls();
+  }

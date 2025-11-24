@@ -121,7 +121,7 @@ export const PLAYER_STATUS_DEFS = [
   export function createDefaultMonsterState(overrides){
     const monster = {
       id: 'raidMonster',
-      active: true,
+      active: false,
       x: 2600,
       y: 2600,
       size: 140,
@@ -163,7 +163,7 @@ export const PLAYER_STATUS_DEFS = [
     if(normalized !== monster){
       GameState.monster = normalized;
     }
-    normalized.active = normalized.active === false ? false : true;
+    normalized.active = normalized.active === true ? true : false;
     const clampCoordValue = (value, limit) => {
       const numeric = Number(value);
       if(!Number.isFinite(numeric)) return limit / 2;
