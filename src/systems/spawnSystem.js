@@ -41,7 +41,9 @@ export function createSpawnSystem({
       slotIndex,
       laneIndex,
       laneLabel: path && path.label ? path.label : String((laneIndex || 0) + 1),
-      path: path || null
+      path: path || null,
+      teamId: path && path.teamId ? path.teamId : side,
+      teamColor: path && path.teamColor ? path.teamColor : null
     };
 
     const insertAt = pendingSpawns.findIndex(existing => job.at < existing.at);
@@ -59,6 +61,9 @@ export function createSpawnSystem({
     const lanePath = job.path || null;
     const slotIndex = job.slotIndex || 0;
     const fanOffset = fanSlotOffset(slotIndex) * laneFanSpacing;
+    const laneColor = job.teamColor || null;
+    const laneTeamId = job.teamId || job.side;
+    const minionSide = laneTeamId || job.side;
 
     if(lanePath){
       const laneLen = lanePath.totalLength || Math.hypot(job.to.x - job.from.x, job.to.y - job.from.y) || 1;
@@ -82,7 +87,9 @@ export function createSpawnSystem({
           };
       const offsideLimit = Math.min(laneLen, neutralProj);
       const minion = {
-        side: job.side,
+        side: minionSide,
+        teamId: laneTeamId,
+        teamColor: laneColor,
         x: job.from.x,
         y: job.from.y,
         to: { x: job.to.x, y: job.to.y },
@@ -134,7 +141,9 @@ export function createSpawnSystem({
     const laneNormal = { x: -laneDir.y, y: laneDir.x };
     const offsideLimit = Math.min(laneLen, neutralDistance);
     minions.push({
-      side: job.side,
+      side: minionSide,
+      teamId: laneTeamId,
+      teamColor: laneColor,
       x: job.from.x,
       y: job.from.y,
       to: {x: job.to.x, y: job.to.y},

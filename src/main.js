@@ -109,6 +109,23 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const cursorState = hudState.cursor;
   const pingState = hudState.pings;
   const keybindState = hudState.keybinds;
+  // Multi-team (experimental) state
+  const defaultTeamColors = ['#4da1ff', '#ff6b6b', '#8ae66c', '#f8d34b', '#b388ff', '#ff9f40', '#50e3c2', '#ff7bb0', '#7ad7f0', '#c2c2c2'];
+  if(!GameState.multiTeam || typeof GameState.multiTeam !== 'object'){
+    GameState.multiTeam = { enabled: true, teamCount: 10, colors: defaultTeamColors.slice(0, 10) };
+  }
+  if(!Array.isArray(GameState.multiTeam.colors) || GameState.multiTeam.colors.length < GameState.multiTeam.teamCount){
+    GameState.multiTeam.colors = defaultTeamColors.slice(0, GameState.multiTeam.teamCount || 10);
+  }
+  GameState.multiTeam.teamCount = Math.max(2, Math.min(10, Math.round(GameState.multiTeam.teamCount || 10)));
+  if(GameState.multiTeam.teamCount % 2 === 1){
+    GameState.multiTeam.teamCount += 1; // ensure even for pairing
+  }
+  function clampMultiTeamCount(value){
+    let count = Math.max(2, Math.min(10, Math.round(Number(value) || GameState.multiTeam.teamCount || 10)));
+    if(count % 2 === 1) count += 1;
+    return count;
+  }
   const activePings = Array.isArray(pingState.active) ? pingState.active : (pingState.active = []);
   const PING_VISUALS = {
     onMyWay: '#7fe3ff',
@@ -121,6 +138,14 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const waveState = hudState.waves;
   const goldState = hudState.gold;
   const scoreState = hudState.score;
+  const scoreModeSelect = document.getElementById('scoreMode');
+  const multiTeamEnabledInput = document.getElementById('multiTeamEnabled');
+  const multiTeamCountInput = document.getElementById('multiTeamCount');
+  const multiTeamColorsWrap = document.getElementById('multiTeamColors');
+  if(!scoreState || typeof scoreState !== 'object'){
+    hudState.score = { mode: 'lastNexus' };
+  }
+  scoreState.mode = typeof scoreState.mode === 'string' ? scoreState.mode : 'lastNexus';
   const portalState = hudState.portal;
   const TURRET_MIN_COUNT = 0;
   const TURRET_MAX_COUNT = 6;
@@ -185,6 +210,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       side,
       baseZone: { x: cx, y: cy, radius: baseRadius },
       fountain: { x: cx, y: cy, radius: fountainRadius },
+      nexus: { x: cx, y: cy, hp: 5000, maxHp: 5000 },
       regenPerSecond: { hp: 180, mp: 120 },
       regenInterval: 0.25,
       invulnerabilityDuration: 1.5,
@@ -195,6 +221,86 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   }
   if(!baseState.blue){ baseState.blue = createDefaultBaseState('blue'); }
   if(!baseState.red){ baseState.red = createDefaultBaseState('red'); }
+  function ensureNexusPosition(side, x, y){
+    if(!side || !baseState || !baseState[side]) return;
+    const base = baseState[side];
+    const existing = base.nexus || {};
+    const maxHp = Number.isFinite(existing.maxHp) ? existing.maxHp : 5000;
+    const hp = Number.isFinite(existing.hp) ? Math.min(existing.hp, maxHp) : maxHp;
+    base.nexus = { x, y, hp, maxHp, side };
+  }
+  function ensureBaseNexus(base, side){
+    if(!base || base.nexus){
+      return;
+    }
+    const cx = (base.baseZone && Number.isFinite(base.baseZone.x)) ? base.baseZone.x
+      : ((base.fountain && Number.isFinite(base.fountain.x)) ? base.fountain.x : (mapState.width / 2));
+    const cy = (base.baseZone && Number.isFinite(base.baseZone.y)) ? base.baseZone.y
+      : ((base.fountain && Number.isFinite(base.fountain.y)) ? base.fountain.y : (mapState.height / 2));
+    const hp = (base.nexus && Number.isFinite(base.nexus.maxHp)) ? base.nexus.maxHp : 5000;
+    base.nexus = { x: cx, y: cy, hp, maxHp: hp, side };
+  }
+  ensureBaseNexus(baseState.blue, 'blue');
+  ensureBaseNexus(baseState.red, 'red');
+  if(!GameState.multiTeamBases || !Array.isArray(GameState.multiTeamBases)){
+    GameState.multiTeamBases = [];
+  }
+  const multiTeamState = GameState.multiTeam;
+  if(multiTeamState.enabled){
+    ensureMultiTeamBases();
+  }
+  function setMultiTeamCount(count){
+    const next = clampMultiTeamCount(count);
+    multiTeamState.teamCount = next;
+    if(!Array.isArray(multiTeamState.colors)){
+      multiTeamState.colors = defaultTeamColors.slice(0, next);
+    }
+    if(multiTeamState.colors.length < next){
+      const missing = next - multiTeamState.colors.length;
+      for(let i=0;i<missing;i++){
+        multiTeamState.colors.push(defaultTeamColors[(multiTeamState.colors.length + i) % defaultTeamColors.length]);
+      }
+    }
+    multiTeamState.colors.length = next;
+    ensureMultiTeamBases();
+  }
+  function ensureMultiTeamBases(){
+    const teams = Math.max(2, Math.min(10, Math.round(multiTeamState.teamCount || 10)));
+    const evenTeams = teams % 2 === 0 ? teams : teams + 1;
+    const width = clampBaseValue(mapState.width, 5000);
+    const height = clampBaseValue(mapState.height, 5000);
+    const cx = width / 2;
+    const cy = height / 2;
+    const radius = Math.min(width, height) * 0.38;
+    const bases = [];
+    for(let i=0;i<evenTeams;i++){
+      const angle = (Math.PI * 2 * i) / evenTeams - Math.PI / 2;
+      const bx = cx + Math.cos(angle) * radius;
+      const by = cy + Math.sin(angle) * radius;
+      const baseRadius = Math.max(520, Math.min(width, height) * 0.18);
+      const fountainRadius = Math.max(220, Math.min(width, height) * 0.085);
+      const id = `team${i}`;
+      bases.push({
+        id,
+        side: id,
+        color: multiTeamState.colors[i % multiTeamState.colors.length] || defaultTeamColors[i % defaultTeamColors.length],
+        baseZone: { x: bx, y: by, radius: baseRadius },
+        fountain: { x: bx, y: by, radius: fountainRadius },
+        nexus: { x: bx, y: by, hp: 5000, maxHp: 5000 },
+        regenPerSecond: { hp: 180, mp: 120 },
+        regenInterval: 0.25,
+        invulnerabilityDuration: 1.5,
+        homeguardDuration: 4,
+        lethalRadius: fountainRadius + 180,
+        lethalDamagePerSecond: 6000
+      });
+      if(scoreState.mode === 'lastNexus'){
+        ensureNexusPosition(id, bx, by);
+      }
+    }
+    GameState.multiTeamBases = bases;
+    return bases;
+  }
   const cursorRuntime = { hoverTarget: null };
   monsterDragState.active = false;
   monsterDragState.dragging = false;
@@ -209,6 +315,9 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const colliderDefaults = mapState.colliders.defaults;
   const customVisionSources = GameState.player.vision.sources;
   GameState.player.vision.dummy = GameState.practiceDummy;
+  if(typeof GameState.player.vision.fullReveal !== 'boolean'){
+    GameState.player.vision.fullReveal = true;
+  }
   const visionDefaults = GameState.player.vision.defaults;
   const visionDummy = GameState.player.vision.dummy;
   const practiceDummy = GameState.practiceDummy;
@@ -529,7 +638,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   }
   function clampTurretRange(value){
     const numeric = Number(value);
-    if(!Number.isFinite(numeric)) return 650;
+    if(!Number.isFinite(numeric)) return 200;
     return Math.max(TURRET_MIN_RANGE, Math.min(TURRET_MAX_RANGE, numeric));
   }
   function clampTurretDamage(value){
@@ -556,7 +665,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     const target = state && typeof state === 'object' ? state : {};
     target.hasCustomOffsets = target.hasCustomOffsets === true;
     target.perLane = clampTurretCount(target.perLane ?? 1);
-    target.range = clampTurretRange(target.range ?? 650);
+    target.range = clampTurretRange(target.range ?? 200);
     target.damage = clampTurretDamage(target.damage ?? 150);
     target.attackInterval = clampTurretInterval(target.attackInterval ?? 1.25);
     target.playerFocusSeconds = clampTurretFocus(target.playerFocusSeconds ?? 2);
@@ -1390,6 +1499,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const visionRotationRow = document.getElementById('visionRotationRow');
   const visionRotationRange = document.getElementById('visionRotation');
   const visionRotationDisplay = document.getElementById('visionRotationDisplay');
+  const visionFullRevealInput = document.getElementById('visionFullReveal');
   const visionModeInput = document.getElementById('visionMode');
   const visionPlaceButton = document.getElementById('visionPlace');
   const visionToggleVisibilityButton = document.getElementById('visionToggleVisibility');
@@ -1799,6 +1909,15 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return mode === 2 ? 'hiding' : 'vision';
   }
 
+  function setVisionFullReveal(value, { syncInput = true } = {}){
+    const enabled = value === true || value === 'true' || value === 'on' || value === '1';
+    GameState.player.vision.fullReveal = !!enabled;
+    if(syncInput && visionFullRevealInput){
+      visionFullRevealInput.checked = enabled;
+    }
+    renderMinimap(true);
+  }
+
   function buildVisionSnapshot(){
     const sources = customVisionSources.map(source => {
       const entry = {
@@ -1820,6 +1939,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       version: 1,
       savedAt: new Date().toISOString(),
       sequence: GameState.player.vision.nextId,
+      fullReveal: GameState.player.vision.fullReveal !== false,
       visionRadius: Number(GameState.player.vision.radius) || 0,
       dummy: {
         active: practiceDummy && practiceDummy.active !== false,
@@ -1894,6 +2014,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(Number.isFinite(radiusValue)){
       GameState.player.vision.radius = clampSettingValue(radiusValue, SETTINGS_RANGE_MIN);
     }
+    setVisionFullReveal(snapshot.fullReveal !== false, { syncInput: true });
 
     const dummy = snapshot.dummy || {};
     if(practiceDummy){
@@ -4954,6 +5075,8 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const turretConfigLoadBtn = document.getElementById('turretConfigLoad');
   const turretConfigSaveBtn = document.getElementById('turretConfigSave');
   const turretConfigFileInput = document.getElementById('turretConfigFile');
+  const btnScoring = document.getElementById('btnScoring');
+  const scoringPane = document.getElementById('scoringPane');
 
   const btnScore   = document.getElementById('btnScore');
   const scorePane  = document.getElementById('scorePane');
@@ -6461,6 +6584,13 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
 
   function updateMonsterState(dt){
     if(!monsterState){
+      return;
+    }
+    if(monsterState.active === false){
+      updateMonsterAbilityQueueDisplay();
+      if(monsterHud){
+        monsterHud.setAttribute('aria-hidden', 'true');
+      }
       return;
     }
     ensureMonsterQueue(monsterState);
@@ -12732,6 +12862,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     { button: btnKeybinds, pane: keybindPane },
     { button: btnAbilityBar, pane: abilityPane },
     { button: btnMinimap, pane: minimapPane },
+    { button: btnScoring, pane: scoringPane },
     { button: btnGold, pane: goldPane },
     { button: btnScore, pane: scorePane },
     { button: btnUiLayout, pane: uiLayoutPane }
@@ -14274,6 +14405,26 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return false;
   }
   function colorForTeam(team){ return team === 'red' ? '#ff5577' : '#2aa9ff'; }
+  function teamColorForSide(side, fallback = '#32d97c'){
+    if(GameState.multiTeam && GameState.multiTeam.enabled){
+      const bases = Array.isArray(GameState.multiTeamBases) ? GameState.multiTeamBases : [];
+      const base = bases.find(entry => entry && entry.id === side);
+      if(base && typeof base.color === 'string'){
+        return sanitizeHexColor(base.color, fallback);
+      }
+      const colors = Array.isArray(GameState.multiTeam.colors) ? GameState.multiTeam.colors : null;
+      if(colors && colors.length){
+        const idxMatch = String(side ?? '').match(/(\d+)/);
+        const idx = idxMatch ? Number(idxMatch[1]) : NaN;
+        if(Number.isFinite(idx) && colors[idx]){
+          return sanitizeHexColor(colors[idx], fallback);
+        }
+      }
+    }
+    if(side === 'red') return '#ff5577';
+    if(side === 'blue') return '#2aa9ff';
+    return fallback;
+  }
   function setPlayerTeam(team){
     const normalized = team === 'red' ? 'red' : 'blue';
     player.team = normalized;
@@ -14350,10 +14501,29 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   }
 
   function getBaseConfig(side){
+    if(GameState.multiTeam && GameState.multiTeam.enabled){
+      const bases = Array.isArray(GameState.multiTeamBases) ? GameState.multiTeamBases : [];
+      if(!bases.length){
+        return null;
+      }
+      if(!side){
+        return bases[0] || null;
+      }
+      return bases.find(b => b && (b.id === side || b.side === side)) || null;
+    }
     if(!GameState.bases || typeof GameState.bases !== 'object'){
       return null;
     }
     return GameState.bases[side === 'red' ? 'red' : 'blue'] || null;
+  }
+  function allBaseConfigs(){
+    if(GameState.multiTeam && GameState.multiTeam.enabled){
+      return (Array.isArray(GameState.multiTeamBases) ? GameState.multiTeamBases : []).filter(Boolean);
+    }
+    if(GameState.bases && typeof GameState.bases === 'object'){
+      return Object.values(GameState.bases).filter(Boolean);
+    }
+    return [];
   }
 
   function onEnterBaseZone(base){
@@ -14794,23 +14964,21 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(player.homeguardTimer > 0){
       player.homeguardTimer = Math.max(0, player.homeguardTimer - dt);
     }
-    const bases = GameState.bases;
-    if(bases && typeof bases === 'object'){
-      for(const base of Object.values(bases)){
-        applyBaseDefense(base, dt);
-      }
+    for(const base of allBaseConfigs()){
+      applyBaseDefense(base, dt);
     }
   }
 
   function drawBaseZones(){
-    if(!ctx || !GameState.bases || typeof GameState.bases !== 'object'){
+    const bases = allBaseConfigs();
+    if(!ctx || !bases.length){
       return;
     }
-    for(const base of Object.values(GameState.bases)){
+    for(const base of bases){
       if(!base){ continue; }
       const zone = base.baseZone;
       const fountain = base.fountain;
-      const baseColor = base.side === 'red' ? '#f43f5e' : '#38bdf8';
+      const baseColor = base.color || teamColorForSide(base.side, '#38bdf8');
       if(zone && circleInCamera(zone.x, zone.y, Math.max(0, Number(zone.radius) || 0) + 24)){
         ctx.save();
         ctx.globalAlpha = 0.12;
@@ -15206,6 +15374,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       return;
     }
     ensureLaneConfigCount(GameState.lanes.count);
+    const isMultiTeam = GameState.multiTeam && GameState.multiTeam.enabled;
     laneOffsetList.innerHTML = '';
     for(let i=0; i<GameState.lanes.count; i++){
       const row = document.createElement('div');
@@ -15255,8 +15424,10 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       wrap.appendChild(input);
       wrap.appendChild(display);
       wrap.appendChild(distance);
-      wrap.appendChild(normalizeBtn);
-      wrap.appendChild(addBreakBtn);
+      if(!isMultiTeam){
+        wrap.appendChild(normalizeBtn);
+        wrap.appendChild(addBreakBtn);
+      }
       row.appendChild(label);
       row.appendChild(wrap);
       laneOffsetList.appendChild(row);
@@ -15360,12 +15531,19 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   }
 
   function buildLaneLayout(){
+    if(GameState.multiTeam && GameState.multiTeam.enabled){
+      return buildMultiTeamLaneLayout();
+    }
     ensureLaneConfigCount(GameState.lanes.count);
     const version = GameState.lanes.version++;
     const startBlue = blueSpawns[0];
     const startRed = redSpawns[0];
     if(!startBlue || !startRed){
       return { version, lanes: [], bluePaths: [], redPaths: [] };
+    }
+    if(scoreState.mode === 'lastNexus'){
+      ensureNexusPosition('blue', startBlue.x, startBlue.y);
+      ensureNexusPosition('red', startRed.x, startRed.y);
     }
     const start = { x: startBlue.x, y: startBlue.y };
     const end = { x: startRed.x, y: startRed.y };
@@ -15445,6 +15623,59 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       bluePaths: lanes.map(l => l.bluePath),
       redPaths: lanes.map(l => l.redPath),
       maxOffset
+    };
+  }
+
+  function buildMultiTeamLaneLayout(){
+    const teams = ensureMultiTeamBases();
+    const version = GameState.lanes.version++;
+    if(!teams || !teams.length){
+      return { version, lanes: [], bluePaths: [], redPaths: [] };
+    }
+    const center = { x: mapState.width / 2, y: mapState.height / 2 };
+    const teamCount = teams.length;
+    GameState.lanes.count = teamCount;
+    ensureLaneConfigCount(teamCount);
+    const lanes = [];
+    for(let i=0;i<teamCount;i++){
+      const cfg = laneConfigs[i] || { offset: 0, breaks: defaultLaneBreaks() };
+      const start = teams[i].baseZone;
+      const target = teams[(i + teamCount / 2) % teamCount].baseZone; // opposite team
+      const middle = { x: center.x, y: center.y };
+      const anchors = [
+        { x: start.x, y: start.y, t: 0 },
+        { x: middle.x, y: middle.y, t: 0.5 },
+        { x: target.x, y: target.y, t: 1 }
+      ];
+      const label = String(i + 1);
+      const bluePath = buildLanePath(anchors, i, label, version, middle);
+      const redPath = buildLanePath([...anchors].reverse(), i, label, version, middle);
+      bluePath.teamId = teams[i].id;
+      bluePath.teamColor = teams[i].color;
+      redPath.teamId = teams[(i + teamCount / 2) % teamCount].id;
+      redPath.teamColor = teams[(i + teamCount / 2) % teamCount].color;
+      const totalLength = bluePath.totalLength;
+      const halfLength = totalLength / 2;
+      lanes.push({
+        index: i,
+        label,
+        middle,
+        control: bluePath.control,
+        bluePath,
+        redPath,
+        breaks: [],
+        distances: { startToMid: halfLength, endToMid: halfLength, total: totalLength },
+        teamId: teams[i].id,
+        teamColor: teams[i].color,
+        targetTeamId: teams[(i + teamCount / 2) % teamCount].id
+      });
+    }
+    return {
+      version,
+      lanes,
+      bluePaths: lanes.map(l => l.bluePath),
+      redPaths: lanes.map(l => l.redPath),
+      maxOffset: Math.min(mapState.width, mapState.height) * 0.4
     };
   }
 
@@ -15619,7 +15850,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     const baseT = fractions[turret.slot] ?? 0.25;
     const layout = ensureLaneLayout();
     const lane = layout && Array.isArray(layout.lanes) ? layout.lanes.find(l => l && l.index === turret.laneIndex) : null;
-    const path = lane ? (turret.side === 'red' ? lane.redPath : lane.bluePath) : null;
+    const path = lanePathForSide(lane, turret.side);
     const pathLen = path ? path.totalLength || 0 : 0;
     if(!path || !(pathLen > 0)){
       return;
@@ -15984,7 +16215,25 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return fractions;
   }
 
-  function createTurret({ id, side, laneIndex, slot, x, y, range, damage, attackInterval, focusSeconds }){
+  function resolvePathTeam(path, fallbackSide){
+    const side = (path && path.teamId) ? path.teamId : fallbackSide;
+    const teamColor = (path && path.teamColor) ? path.teamColor : teamColorForSide(side);
+    return { side, teamColor };
+  }
+
+  function lanePathForSide(lane, side){
+    if(!lane){
+      return null;
+    }
+    const matches = (path)=> path && (path.teamId === side);
+    if(matches(lane.bluePath)) return lane.bluePath;
+    if(matches(lane.redPath)) return lane.redPath;
+    if(side === 'red') return lane.redPath || lane.bluePath;
+    if(side === 'blue') return lane.bluePath || lane.redPath;
+    return lane.bluePath || lane.redPath || null;
+  }
+
+  function createTurret({ id, side, laneIndex, slot, x, y, range, damage, attackInterval, focusSeconds, teamColor }){
     return {
       id,
       side,
@@ -15996,6 +16245,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       damage,
       attackInterval,
       focusSeconds,
+      teamColor,
       target: null,
       cooldown: 0,
       focusPlayerTimer: 0
@@ -16039,6 +16289,8 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       const redPath = lane && lane.redPath;
       const blueLength = bluePath ? bluePath.totalLength || 0 : 0;
       const redLength = redPath ? redPath.totalLength || 0 : 0;
+      const blueTeam = resolvePathTeam(bluePath, 'blue');
+      const redTeam = resolvePathTeam(redPath, 'red');
       for(let slot = 0; slot < perLane; slot++){
         const baseT = slotFractions[slot] ?? 0.25;
         const tBlue = baseT;           // 0 -> own portal, 0.5 -> midpoint
@@ -16050,7 +16302,8 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
           const y = clampCoord(sample.point.y + (useOffsets ? (Number(offset.y) || 0) : 0), mapState.height);
           turrets.push(createTurret({
             id: nextId++,
-            side: 'blue',
+            side: blueTeam.side,
+            teamColor: blueTeam.teamColor,
             laneIndex: lane.index,
             slot,
             x,
@@ -16067,7 +16320,8 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
           const y = clampCoord(sample.point.y + (useOffsets ? (Number(offset.y) || 0) : 0), mapState.height);
           turrets.push(createTurret({
             id: nextId++,
-            side: 'red',
+            side: redTeam.side,
+            teamColor: redTeam.teamColor,
             laneIndex: lane.index,
             slot,
             x,
@@ -17130,6 +17384,9 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return colliderContainsPoint(source, x, y, tolerance);
   }
   function pointInVision(x, y, tolerance = 0){
+    if(GameState.player.vision.fullReveal){
+      return true;
+    }
     const buffer = Math.max(0, tolerance);
     for(const source of customVisionSources){
       if(!source) continue;
@@ -17528,6 +17785,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     } else {
       ensureVisionConsistency(visionDefaults);
     }
+    setVisionFullReveal(GameState.player.vision.fullReveal !== false, { syncInput: true });
     const resolveType = (type)=> type === 'capsule' ? 'capsule'
       : (type === 'crescent' ? 'crescent' : 'circle');
     const activeType = resolveType(selected ? selected.type : visionDefaults.type);
@@ -17795,6 +18053,11 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       GameState.player.vision.hidden = !GameState.player.vision.hidden;
       updateVisionUiState();
       renderMinimap(true);
+    });
+  }
+  if(visionFullRevealInput){
+    visionFullRevealInput.addEventListener('change', ()=>{
+      setVisionFullReveal(visionFullRevealInput.checked, { syncInput: false });
     });
   }
   if(visionDeleteButton){
@@ -18308,6 +18571,8 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     label: 'Minimap',
     filePrefix: 'minimap'
   });
+
+  applyScoreModeUi();
 
   setupSectionPersistence({
     paneId: 'goldPane',
@@ -19394,6 +19659,13 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(!minion || minion.isPracticeDummy){
       return false;
     }
+    if(GameState.multiTeam && GameState.multiTeam.enabled){
+      const targetSide = side ?? player.team;
+      if(minion.teamId === targetSide){
+        return false;
+      }
+      return !!(minion.hp > 0 && minion.portalizing <= 0);
+    }
     if(minion.side !== 'blue' && minion.side !== 'red'){
       return false;
     }
@@ -19748,6 +20020,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       toX: target.x,
       toY: target.y,
       side: turret.side,
+      teamColor: turret.teamColor,
       age: 0,
       duration: 0.2
     });
@@ -20545,20 +20818,35 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     const lanePlanMinimap = ensureLaneLayout();
     if(lanePlanMinimap && lanePlanMinimap.lanes.length){
       minimapCtx.save();
-      minimapCtx.lineWidth = Math.max(2, 5 * scale);
-      minimapCtx.strokeStyle = '#32d97c';
       minimapCtx.lineCap = 'round';
-      for(const lane of lanePlanMinimap.lanes){
-        const points = (lane.bluePath && Array.isArray(lane.bluePath.points) && lane.bluePath.points.length > 1)
-          ? lane.bluePath.points
-          : [lane.bluePath.from, lane.bluePath.to];
+      const drawLanePath = (path, color)=>{
+        const points = (path && Array.isArray(path.points) && path.points.length > 1)
+          ? path.points
+          : (path ? [path.from, path.to] : null);
         if(points && points.length > 1){
           minimapCtx.beginPath();
           minimapCtx.moveTo(points[0].x * scaleX, points[0].y * scaleY);
           for(let i=1;i<points.length;i++){
             minimapCtx.lineTo(points[i].x * scaleX, points[i].y * scaleY);
           }
+          minimapCtx.lineWidth = Math.max(2, 5 * scale);
+          minimapCtx.strokeStyle = color;
           minimapCtx.stroke();
+        }
+      };
+
+      for(const lane of lanePlanMinimap.lanes){
+        const blueColor = (lane.bluePath && lane.bluePath.teamColor) || teamColorForSide('blue');
+        const redColor = (lane.redPath && lane.redPath.teamColor) || teamColorForSide('red');
+        const laneColor = lane.teamColor
+          ? lane.teamColor
+          : ((lane.bluePath && lane.bluePath.teamColor) || (lane.redPath && lane.redPath.teamColor) || blueColor || redColor || '#32d97c');
+
+        if(lane.bluePath){
+          drawLanePath(lane.bluePath, blueColor);
+        }
+        if(lane.redPath && lane.redPath !== lane.bluePath){
+          drawLanePath(lane.redPath, redColor);
         }
 
         const midX = lane.middle.x * scaleX;
@@ -20566,10 +20854,12 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         const radius = Math.max(6, 14 * scale);
         minimapCtx.beginPath();
         minimapCtx.arc(midX, midY, radius, 0, Math.PI * 2);
-        minimapCtx.fillStyle = '#164d2c';
+        minimapCtx.globalAlpha = 0.22;
+        minimapCtx.fillStyle = laneColor;
         minimapCtx.fill();
+        minimapCtx.globalAlpha = 1;
         minimapCtx.lineWidth = Math.max(1.6, 3 * scale);
-        minimapCtx.strokeStyle = '#32d97c';
+        minimapCtx.strokeStyle = laneColor;
         minimapCtx.stroke();
         minimapCtx.fillStyle = '#d7ffde';
         minimapCtx.font = `bold ${Math.max(8, Math.round((radius + 2) * 0.9))}px system-ui`;
@@ -20582,10 +20872,10 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
           for(const bp of lane.breaks){
             minimapCtx.beginPath();
             minimapCtx.arc(bp.x * scaleX, bp.y * scaleY, breakRadius, 0, Math.PI * 2);
-            minimapCtx.fillStyle = '#0f3621';
+            minimapCtx.fillStyle = '#041019';
             minimapCtx.fill();
             minimapCtx.lineWidth = Math.max(1.4, 2.5 * scale);
-            minimapCtx.strokeStyle = '#32d97c';
+            minimapCtx.strokeStyle = laneColor;
             minimapCtx.stroke();
           }
         }
@@ -20602,9 +20892,10 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         const px = turret.x * scaleX;
         const py = turret.y * scaleY;
         const size = Math.max(4, 8 * scale);
+        const markerColor = turret.teamColor || teamColorForSide(turret.side);
         minimapCtx.beginPath();
         minimapCtx.rect(px - size / 2, py - size / 2, size, size);
-        minimapCtx.fillStyle = turret.side === 'red' ? '#ff5577' : '#2aa9ff';
+        minimapCtx.fillStyle = markerColor;
         minimapCtx.fill();
         minimapCtx.strokeStyle = '#041019';
         minimapCtx.stroke();
@@ -21809,6 +22100,19 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   }
   function drawFogOfWar(){
     const overlayColor = 'rgba(6, 12, 20, 0.82)';
+    const viewWidth = Math.max(1, Math.round(camera.baseWidth));
+    const viewHeight = Math.max(1, Math.round(camera.baseHeight));
+    if(fogCanvas.width !== viewWidth || fogCanvas.height !== viewHeight){
+      fogCanvas.width = viewWidth;
+      fogCanvas.height = viewHeight;
+    }
+
+    fogCtx.setTransform(1, 0, 0, 1, 0, 0);
+    fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
+    if(GameState.player.vision.fullReveal){
+      return;
+    }
+
     const areas = [];
     for(const source of customVisionSources){
       if(!source) continue;
@@ -21852,16 +22156,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         }
       }
     }
-
-    const viewWidth = Math.max(1, Math.round(camera.baseWidth));
-    const viewHeight = Math.max(1, Math.round(camera.baseHeight));
-    if(fogCanvas.width !== viewWidth || fogCanvas.height !== viewHeight){
-      fogCanvas.width = viewWidth;
-      fogCanvas.height = viewHeight;
-    }
-
-    fogCtx.setTransform(1, 0, 0, 1, 0, 0);
-    fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
 
     const cameraScale = Math.max(0.001, Number(camera.scale) || 1);
     fogCtx.setTransform(cameraScale, 0, 0, cameraScale, -camera.x * cameraScale, -camera.y * cameraScale);
@@ -22003,12 +22297,12 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         continue;
       }
       const range = Math.max(0, Number(turret.range) || 0);
-      const color = turret.side === 'red' ? '#ff5577' : '#2aa9ff';
+      const color = turret.teamColor || teamColorForSide(turret.side);
       const rangeVisible = range > 0 && circleInCamera(turret.x, turret.y, range + 18);
       if(rangeVisible){
         ctx.save();
         ctx.globalAlpha = turret.target === player ? 0.2 : 0.12;
-        ctx.fillStyle = turret.side === 'red' ? 'rgba(255, 85, 119, 0.18)' : 'rgba(42, 169, 255, 0.18)';
+        ctx.fillStyle = color;
         ctx.beginPath();
         ctx.arc(turret.x, turret.y, range, 0, Math.PI * 2);
         ctx.fill();
@@ -22036,7 +22330,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       ctx.strokeStyle = '#05121a';
       ctx.stroke();
       ctx.lineWidth = 2;
-      ctx.strokeStyle = turret.side === 'red' ? '#ffc6d3' : '#c8ecff';
+      ctx.strokeStyle = color;
       ctx.beginPath();
       ctx.arc(turret.x, turret.y, bodyRadius * 0.58, 0, Math.PI * 2);
       ctx.stroke();
@@ -22064,7 +22358,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       const life = Math.max(0.05, Number(shot.duration) || 0.2);
       const age = Math.max(0, Math.min(life, Number(shot.age) || 0));
       const t = life > 0 ? age / life : 1;
-      const color = shot.side === 'red' ? '#ff8aa3' : '#9ad7ff';
+      const color = shot.teamColor || teamColorForSide(shot.side, '#9ad7ff');
       ctx.save();
       ctx.globalAlpha = 0.9 - t * 0.35;
       ctx.lineWidth = 3;
@@ -22087,7 +22381,9 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       drawPracticeDummyCapsule(m);
       return;
     }
-    const fill = m.side==='blue' ? '#2aa9ff' : '#ff5577';
+    const fill = m.teamColor
+      ? m.teamColor
+      : (m.side==='blue' ? '#2aa9ff' : (m.side==='red' ? '#ff5577' : '#a0a0a0'));
     const stroke = '#05121a';
 
     // Body
@@ -22709,6 +23005,13 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   }
 
   function drawPlayer(){
+    if(!Number.isFinite(player.x) || !Number.isFinite(player.y)){
+      player.x = mapState.width / 2;
+      player.y = mapState.height / 2;
+    }
+    if(!Number.isFinite(player.r)){
+      player.r = Math.max(6, playerRadius || 10);
+    }
     const range = Math.max(0, Number(player.attackRange) || 0);
     const rangeOpacityRaw = Number(player.attackRangeOpacity);
     const rangeOpacity = Math.max(0, Math.min(1, Number.isFinite(rangeOpacityRaw) ? rangeOpacityRaw : 0));
@@ -23044,11 +23347,15 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         continue;
       }
 
+      const friendlyTeam = (GameState.multiTeam && GameState.multiTeam.enabled)
+        ? (m.teamId ?? m.side)
+        : m.side;
+
       // nearest enemy
       let targetMinion = null;
       let best = Infinity;
       for(const n of minions){
-        if(n.side===m.side || n.portalizing>0 || n.hp <= 0) continue;
+        if(!isEnemyMinionForSide(n, friendlyTeam)) continue;
         const d = Math.hypot(n.x - m.x, n.y - m.y);
         if(d < best){
           best = d;
@@ -23585,11 +23892,12 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(lanePlanForDraw && lanePlanForDraw.lanes.length){
       ctx.save();
       ctx.lineWidth = 4;
-      ctx.strokeStyle = '#32d97c';
       ctx.lineCap = 'round';
       const laneTotal = lanePlanForDraw.lanes.length;
       const baseRadius = Math.max(12, 20 - Math.max(0, laneTotal - 1));
       for(const lane of lanePlanForDraw.lanes){
+        const laneColor = lane.teamColor || '#32d97c';
+        ctx.strokeStyle = laneColor;
         const points = (lane.bluePath && Array.isArray(lane.bluePath.points) && lane.bluePath.points.length > 1)
           ? lane.bluePath.points
           : [lane.bluePath.from, lane.bluePath.to];
@@ -23605,10 +23913,10 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         const radius = baseRadius;
         ctx.beginPath();
         ctx.arc(lane.middle.x, lane.middle.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = '#164d2c';
+        ctx.fillStyle = lane.teamColor || '#164d2c';
         ctx.fill();
         ctx.lineWidth = 3;
-        ctx.strokeStyle = '#32d97c';
+        ctx.strokeStyle = laneColor;
         ctx.stroke();
         ctx.fillStyle = '#d7ffde';
         ctx.font = `bold ${Math.max(12, radius + 2)}px system-ui`;
@@ -24036,6 +24344,10 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(laneIndex < 0 || laneIndex >= laneConfigs.length){
       return;
     }
+    if(GameState.multiTeam && GameState.multiTeam.enabled){
+      // For multi-team, distances are symmetric by construction (center hub lanes)
+      return;
+    }
     const startBlue = blueSpawns[0];
     const startRed = redSpawns[0];
     if(!startBlue || !startRed){
@@ -24152,4 +24464,61 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     invalidateLaneLayout({ resetMinions: true });
     updateLaneDistanceDisplays();
     updateLaneOffsetControls();
+  }
+
+  // Scoring / Multi-team UI
+  function renderMultiTeamColors(){
+    if(!multiTeamColorsWrap){
+      return;
+    }
+    multiTeamColorsWrap.innerHTML = '';
+    const count = multiTeamState.teamCount || 2;
+    for(let i=0;i<count;i++){
+      const input = document.createElement('input');
+      input.type = 'color';
+      input.value = sanitizeHexColor(multiTeamState.colors[i] || defaultTeamColors[i % defaultTeamColors.length], '#7fe3ff');
+      input.dataset.teamIndex = String(i);
+      input.addEventListener('input', ()=>{
+        multiTeamState.colors[i] = sanitizeHexColor(input.value, defaultTeamColors[i % defaultTeamColors.length]);
+        ensureMultiTeamBases();
+        invalidateLaneLayout({ resetMinions: true });
+        renderMinimap(true);
+      });
+      multiTeamColorsWrap.appendChild(input);
+    }
+  }
+
+  function applyScoreModeUi(){
+    if(scoreModeSelect){
+      scoreModeSelect.value = scoreState.mode;
+      scoreModeSelect.addEventListener('change', ()=>{
+        scoreState.mode = scoreModeSelect.value;
+        invalidateLaneLayout({ resetMinions: false });
+      });
+    }
+    if(multiTeamEnabledInput){
+      multiTeamEnabledInput.checked = !!multiTeamState.enabled;
+      multiTeamEnabledInput.addEventListener('change', ()=>{
+        multiTeamState.enabled = multiTeamEnabledInput.checked;
+        if(multiTeamState.enabled){
+          setMultiTeamCount(multiTeamState.teamCount);
+        }
+        invalidateLaneLayout({ resetMinions: true });
+        updateLaneOffsetControls();
+        renderMinimap(true);
+      });
+    }
+    if(multiTeamCountInput){
+      multiTeamCountInput.value = String(multiTeamState.teamCount);
+      multiTeamCountInput.addEventListener('change', ()=>{
+        const next = clampMultiTeamCount(multiTeamCountInput.value);
+        setMultiTeamCount(next);
+        multiTeamCountInput.value = String(next);
+        renderMultiTeamColors();
+        invalidateLaneLayout({ resetMinions: true });
+        updateLaneOffsetControls();
+        renderMinimap(true);
+      });
+    }
+    renderMultiTeamColors();
   }

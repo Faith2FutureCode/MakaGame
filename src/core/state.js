@@ -323,6 +323,7 @@ export function createDefaultPlayerFloatState(){
         dragOffset: { x: 0, y: 0 },
         dragMoved: false,
         hidden: false,
+        fullReveal: true,
         dummy: createDefaultPracticeDummy(),
         dummyState: { placing: false, dragging: false, pointerId: null, dragOffset: { x: 0, y: 0 }, selected: false },
         defaults: {
@@ -445,7 +446,7 @@ export function createDefaultPlayerFloatState(){
     },
     turrets: {
       perLane: 1,
-      range: 650,
+      range: 200,
       damage: 150,
       attackInterval: 1.25,
       playerFocusSeconds: 2,

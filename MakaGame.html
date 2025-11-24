@@ -218,6 +218,21 @@
       margin-left:10px;
       white-space:nowrap;
     }
+    #multiTeamColors {
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      max-width:100%;
+    }
+    #multiTeamColors input[type="color"] {
+      width:32px;
+      height:32px;
+      padding:0;
+      border:1px solid #2a3756;
+      border-radius:8px;
+      background:#0e1a31;
+      flex:0 0 auto;
+    }
 
     /* Animation editor */
     .playerAnimationSection { display:grid; gap:12px; padding:12px; border-radius:12px; border:1px solid #22314c; background:#101c33; box-shadow:inset 0 0 0 1px rgba(15,27,47,0.35); }
@@ -1778,6 +1793,7 @@
           <input id="visionConfigFile" type="file" accept="application/json,.json" style="display:none" />
           <div class="subhint">Configure fog of war vision sources.</div>
           <button class="subbtn" id="visionEditToggle" type="button">Enter vision edit mode</button>
+          <div class="formrow"><label for="visionFullReveal">Full vision</label><div class="rangeWrap"><input type="checkbox" id="visionFullReveal" checked aria-label="Reveal full map vision" /><span class="rangeValue">Reveal entire map</span></div></div>
           <div class="formrow rangeRow"><label for="GameState.player.vision.radius">Player vision</label><div class="rangeWrap"><input type="number" id="GameState.player.vision.radius" min="0" max="10000" value="900"><span class="rangeValue" id="playerVisionRadiusDisplay">900px</span></div></div>
           <div class="subhint">Vision shapes</div>
           <div class="formrow"><label for="visionShape">Shape</label><select id="visionShape"><option value="circle">Circle</option><option value="capsule">Pill</option><option value="crescent">Crescent</option></select></div>
@@ -1812,6 +1828,35 @@
           <div class="formrow"><label>Share</label><div class="rangeWrap"><button class="formButton" id="perfCopyLog" type="button">Copy log</button></div></div>
           <div class="formrow"><label></label><div class="rangeWrap"><button class="formButton" id="perfDownloadLog" type="button">Download log</button></div></div>
           <div class="formrow"><label></label><div class="rangeWrap"><button class="formButton" id="perfStressTest" type="button">Run stress test</button></div></div>
+        </div>
+
+        <!-- Game Mode / Scoring -->
+        <button class="btn" data-settings-genre="moba" id="btnScoring" data-icon="A~J" title="Game mode">
+          Game mode <span class="hint">Scoring &amp; teams</span>
+        </button>
+        <div class="submenu" id="scoringPane">
+          <div class="formrow"><label>Mode</label>
+            <div class="rangeWrap">
+              <select id="scoreMode">
+                <option value="standard">Standard (portals)</option>
+                <option value="lastNexus">Last nexus standing</option>
+              </select>
+            </div>
+          </div>
+          <div class="formrow"><label>Enable multi-team (experimental)</label>
+            <div class="rangeWrap">
+              <input type="checkbox" id="multiTeamEnabled">
+            </div>
+          </div>
+          <div class="formrow"><label for="multiTeamCount">Team count (even, max 10)</label>
+            <div class="rangeWrap">
+              <input type="number" id="multiTeamCount" min="2" max="10" step="2" value="10">
+            </div>
+          </div>
+          <div class="formrow"><label>Team colors</label>
+            <div class="rangeWrap" id="multiTeamColors"></div>
+          </div>
+          <div class="subhint">Multi-team is experimental; enables radial lanes, per-team nexus, and last-nexus scoring.</div>
         </div>
 
         <!-- Minions -->
