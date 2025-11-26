@@ -3,6 +3,7 @@ export const PLAYER_STATUS_DEFS = [
     { id: 'slowed', label: 'Slowed', timerKey: 'slowTimer', defaultEmoji: '🐌', defaultColor: '#9ad0ff' },
     { id: 'taunted', label: 'Taunted', timerKey: 'tauntTimer', defaultEmoji: '😡', defaultColor: '#ff8c8c' },
     { id: 'hasted', label: 'Hasted', timerKey: 'hasteTimer', defaultEmoji: '💨', defaultColor: '#ffd27f' },
+    { id: 'fortified', label: 'Fortified', timerKey: 'damageReductionTimer', defaultEmoji: 'DR', defaultColor: '#f97316' },
     { id: 'recalling', label: 'Recalling', timerKey: 'recallTimer', defaultEmoji: '🏠', defaultColor: '#7fe3ff' },
     { id: 'homeguard', label: 'Homeguard', timerKey: 'homeguardTimer', defaultEmoji: '🦵', defaultColor: '#4ade80' },
     { id: 'invulnerable', label: 'Invulnerable', timerKey: 'baseInvulnTimer', defaultEmoji: '🛡️', defaultColor: '#facc15' }
@@ -16,9 +17,9 @@ export const PLAYER_STATUS_DEFS = [
   }
 
   export const PRAYER_DEFS = [
-    { id: 'green', label: 'Green Protection', defaultBinding: { key: '1', code: 'Digit1' } },
-    { id: 'blue', label: 'Blue Protection', defaultBinding: { key: '2', code: 'Digit2' } },
-    { id: 'red', label: 'Red Protection', defaultBinding: { key: '3', code: 'Digit3' } }
+    { id: 'green', label: 'Green Protection', defaultBinding: null },
+    { id: 'blue', label: 'Blue Protection', defaultBinding: null },
+    { id: 'red', label: 'Red Protection', defaultBinding: null }
   ];
   export const MONSTER_ABILITY_IDS = PRAYER_DEFS.map(def => def.id);
   export const DEFAULT_MONSTER_ICONS = { green: '🟢', blue: '🔵', red: '🔴' };
@@ -48,7 +49,7 @@ export const PLAYER_STATUS_DEFS = [
       if(code.startsWith('Key')) return code.slice(3);
       return code;
     }
-    return '�?"';
+    return 'Unbound';
   }
 
   export function buildDefaultPrayerBindings(){
@@ -252,6 +253,8 @@ export function createDefaultPlayerFloatState(){
       silenceTimer: 0,
       disarmTimer: 0,
       polymorphTimer: 0,
+      damageReductionTimer: 0,
+      damageReductionFraction: 0,
       tauntTimer: 0,
       hasteTimer: 0,
       hastePct: 0,
@@ -400,17 +403,30 @@ export function createDefaultPlayerFloatState(){
       hudMessage: { timer: null },
       sidebar: { lastMeasuredWidth: null },
       abilityTunables: { spellSpeedScale: 1, spellSizeScale: 1 },
-      abilityRuntime: { flameChomperSequence: 1, lastPointerWorld: null, stagePointerOrdering: false, activePointerId: null },
+      abilityRuntime: {
+        flameChomperSequence: 1,
+        scatterChargeSequence: 1,
+        mourningMarchSequence: 1,
+        stockadeSequence: 1,
+        emberWaltzSequence: 1,
+        razorWhirlSequence: 1,
+        graviticSequence: 1,
+        linkLashSequence: 1,
+        abilityCycleIndex: 0,
+        lastPointerWorld: null,
+        stagePointerOrdering: false,
+        activePointerId: null
+      },
       cursor: { enabled: false, outlineEnabled: true, emoji: '🎯', hoverColor: '#7fe3ff' },
       pings: { types: { onMyWay: '🏃', enemyMissing: '❓', assistMe: '🆘', target: '🎯' }, active: [] },
-      spellCasting: {
-        defaultCastType: 'quick',
+        spellCasting: {
+          defaultCastType: 'quickIndicator',
         normalModifier: { key: '', code: '', label: '—' },
         quickModifier: { key: '', code: '', label: '—' },
         quickIndicatorModifier: { key: '', code: '', label: '—' }
       },
       keybinds: {
-        attackMove: { key: 'a', code: 'KeyA', label: 'A' },
+        attackMove: { key: '', code: '', label: formatAbilityKeyLabel('', '') },
         pingWheel: { key: 'g', code: 'KeyG', label: 'G' }
       },
       abilityBar: {
@@ -458,22 +474,71 @@ export function createDefaultPlayerFloatState(){
       activeBeams: [],
       beamCasts: [],
       laserConeCasts: [],
+      duskwaveCasts: [],
+      backdraftWaveCasts: [],
+      sirensKissCasts: [],
       grabCasts: [],
+      backlineSeizureCasts: [],
+      skyScoutFlights: [],
+      skyScoutVisionSources: [],
+      skyScoutState: { charges: 2, maxCharges: 2, rechargeTimer: 0 },
       piercingArrowCasts: [],
       plasmaFissionCasts: [],
+      voidTrackCasts: [],
       chargingGaleCasts: [],
+      snowballRollCasts: [],
+      snowballRollProjectiles: [],
+      slingshotCrashCasts: [],
+      slingshotCrashLeaps: [],
+      springquakeCasts: [],
       cullingBarrageChannels: [],
       cullingBarrageProjectiles: [],
+      verdictSalvoCasts: [],
+      verdictSalvoProjectiles: [],
       arcaneRiteModes: [],
       arcaneRiteExplosions: [],
+      dirgeBloomCasts: [],
+      quiverstormBuffs: [],
+      weepingAuras: [],
+      reboundOrbCasts: [],
+      shatterburstOrbCasts: [],
       piercingArrowProjectiles: [],
       plasmaFissionProjectiles: [],
+      reboundOrbProjectiles: [],
+      shatterburstOrbProjectiles: [],
+      ricochetBombCasts: [],
+      ricochetBombProjectiles: [],
+      scatterChargeCasts: [],
+      scatterCharges: [],
+      skyhookSwingCasts: [],
+      flipbladeCasts: [],
+      flipbladeProjectiles: [],
+      flipbladeMarks: [],
+      flipbladeDashes: [],
+      mourningMarchCasts: [],
+      linkLashCasts: [],
+      linkLashTethers: [],
       flameChomperTraps: [],
+      graviticCasts: [],
+      gravityProjectiles: [],
+      graviticSlowDecays: [],
+      spectralStockadeCasts: [],
+      spectralStockades: [],
+      boneSkewerCasts: [],
       pulses: [],
       laserProjectiles: [],
+      duskwaveVolleys: [],
+      backdraftShards: [],
       blinkingBoltProjectiles: [],
+      emberWaltzCasts: [],
+      emberWaltzFlames: [],
+      razorWhirlCasts: [],
+      shadowPursuitCasts: [],
+      snapbackEchoes: [],
       chargingGaleProjectiles: [],
-      hitsplats: []
+      hitsplats: [],
+      bulwarkCrashCasts: [],
+      playerShields: []
     }
   };
 }

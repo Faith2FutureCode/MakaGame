@@ -3,6 +3,14 @@
   let running = false;
   let lastTime = 0;
   let frameHandle = null;
+  const root = (typeof globalThis !== 'undefined' && globalThis) || (typeof window !== 'undefined' ? window : undefined);
+  const getNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const raf = root && typeof root.requestAnimationFrame === 'function'
+    ? root.requestAnimationFrame.bind(root)
+    : (cb) => setTimeout(() => cb(getNow()), 16);
+  const caf = root && typeof root.cancelAnimationFrame === 'function'
+    ? root.cancelAnimationFrame.bind(root)
+    : clearTimeout;
 
   function step(now){
     if(!running){
@@ -17,7 +25,7 @@
         console.error('[engine] system error', err);
       }
     });
-    frameHandle = requestAnimationFrame(step);
+    frameHandle = raf(step);
   }
 
   return {
@@ -30,8 +38,8 @@
         return;
       }
       running = true;
-      lastTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      frameHandle = requestAnimationFrame(step);
+      lastTime = getNow();
+      frameHandle = raf(step);
     },
     stop(){
       if(!running){
@@ -39,7 +47,7 @@
       }
       running = false;
       if(frameHandle !== null){
-        cancelAnimationFrame(frameHandle);
+        caf(frameHandle);
         frameHandle = null;
       }
     },
