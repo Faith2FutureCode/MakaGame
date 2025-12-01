@@ -120,7 +120,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   abilityRuntime.flipbladeSequence = Math.max(1, Number(abilityRuntime.flipbladeSequence) || 1);
   abilityRuntime.trailblazeSequence = Math.max(1, Number(abilityRuntime.trailblazeSequence) || 1);
   abilityRuntime.phalanxSurgeSequence = Math.max(1, Number(abilityRuntime.phalanxSurgeSequence) || 1);
-  abilityRuntime.razorWhirlSequence = Math.max(1, Number(abilityRuntime.razorWhirlSequence) || 1);
   abilityRuntime.graviticSequence = Math.max(1, Number(abilityRuntime.graviticSequence) || 1);
   abilityRuntime.eventHorizonSequence = Math.max(1, Number(abilityRuntime.eventHorizonSequence) || 1);
   abilityRuntime.skyScoutSequence = Math.max(1, Number(abilityRuntime.skyScoutSequence) || 1);
@@ -1666,123 +1665,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       endFrame: document.getElementById('playerAnimationAction-taunt-end')
     }
   };
-
-  const DUALFIRE_ABILITY_ID = 'dualfire_swap';
-
-  function getDualfireConfig(){
-    const ability = getAbilityDefinition(DUALFIRE_ABILITY_ID);
-    const defaults = {
-      stackDuration: 2.5,
-      maxStacks: 3,
-      stackAttackSpeedPct: 15,
-      rangeBonus: 150,
-      rocketDamagePct: 110,
-      splashRadius: 120,
-      attackSpeedPenaltyPct: 10
-    };
-    if(!ability){
-      return { ...defaults };
-    }
-    const stackDurationMs = Math.max(0, Number(abilityFieldValue(ability, 'stackDurationMs')) || 0);
-    const stackDuration = stackDurationMs > 0 ? stackDurationMs / 1000 : defaults.stackDuration;
-    const maxStacks = Math.max(1, Math.floor(Number(abilityFieldValue(ability, 'maxStacks')) || defaults.maxStacks));
-    const stackAttackSpeedPct = Math.max(0, Number(abilityFieldValue(ability, 'stackAttackSpeedPct')) || defaults.stackAttackSpeedPct);
-    const rangeBonus = Math.max(0, Number(abilityFieldValue(ability, 'rangeBonus')) || defaults.rangeBonus);
-    const rocketDamagePct = Math.max(0, Number(abilityFieldValue(ability, 'rocketDamagePct')) || defaults.rocketDamagePct);
-    const splashRadius = Math.max(0, Number(abilityFieldValue(ability, 'splashRadius')) || defaults.splashRadius);
-    const attackSpeedPenaltyPct = Math.max(0, Number(abilityFieldValue(ability, 'attackSpeedPenaltyPct')) || defaults.attackSpeedPenaltyPct);
-    return {
-      stackDuration,
-      maxStacks,
-      stackAttackSpeedPct,
-      rangeBonus,
-      rocketDamagePct,
-      splashRadius,
-      attackSpeedPenaltyPct
-    };
-  }
-
-  function addDualfireStack(duration, maxStacks){
-    if(!(duration > 0)) return;
-    const stacks = dualfireSwapState.stacks;
-    stacks.push(duration);
-    while(stacks.length > maxStacks){
-      stacks.shift();
-    }
-  }
-
-  function updateDualfireStacks(dt){
-    if(!(dt > 0)) return;
-    const stacks = dualfireSwapState.stacks;
-    if(!stacks.length) return;
-    for(let i = stacks.length - 1; i >= 0; i--){
-      stacks[i] = Math.max(0, stacks[i] - dt);
-      if(stacks[i] <= 0){
-        stacks.splice(i, 1);
-      }
-    }
-  }
-
-  function computeDualfireStackPct(count, config){
-    if(!(count > 0) || !config) return 0;
-    const base = Math.max(0, Number(config.stackAttackSpeedPct) || 0);
-    if(base <= 0) return 0;
-    const extraStacks = Math.max(0, count - 1);
-    const extra = extraStacks * base * 0.5;
-    return base + extra;
-  }
-
-  function resolveDualfireRangeBonus(){
-    if(dualfireSwapState.form !== 'rocket'){
-      return 0;
-    }
-    const config = getDualfireConfig();
-    return Math.max(0, Number(config.rangeBonus) || 0);
-  }
-
-  function resolveDualfireAttackSpeedMultiplier(){
-    const config = getDualfireConfig();
-    let multiplier = 1;
-    let stackCount = 0;
-    if(dualfireSwapState.form === 'minigun'){
-      stackCount = dualfireSwapState.stacks.length;
-    } else {
-      stackCount = Math.max(0, Number(dualfireSwapState.rocketRevStacks) || 0);
-    }
-    const stackPct = computeDualfireStackPct(stackCount, config);
-    if(stackPct > 0){
-      multiplier *= 1 + stackPct / 100;
-      if(dualfireSwapState.form === 'rocket'){
-        dualfireSwapState.rocketRevStacks = 0;
-      }
-    }
-    if(dualfireSwapState.form === 'rocket'){
-      const penaltyPct = Math.max(0, Number(config.attackSpeedPenaltyPct) || 0);
-      const penaltyMult = Math.max(0.001, 1 - penaltyPct / 100);
-      multiplier *= penaltyMult;
-    }
-    return multiplier;
-  }
-
-  function castDualfireShiftAbility(slotIndex, ability){
-    const abilityName = ability && (ability.shortName || ability.name)
-      ? (ability.shortName || ability.name)
-      : 'Dualfire Shift';
-    const nextForm = dualfireSwapState.form === 'rocket' ? 'minigun' : 'rocket';
-    dualfireSwapState.form = nextForm;
-    const config = getDualfireConfig();
-    if(nextForm === 'rocket'){
-      const availableStacks = Math.min(dualfireSwapState.stacks.length, config.maxStacks);
-      dualfireSwapState.rocketRevStacks = availableStacks;
-      dualfireSwapState.stacks.length = 0;
-      setHudMessage(`${abilityName} switched to Fishbones!`);
-    } else {
-      dualfireSwapState.rocketRevStacks = 0;
-      setHudMessage(`${abilityName} switched to Pow-Pow!`);
-    }
-    cancelPlayerAttack(false);
-    return true;
-  }
 
   const PLAYER_ANIMATION_ACTIONS = ['idle', 'move', 'autoAttack', 'cast', 'death', 'taunt'];
   const PLAYER_MODEL_OFFSET_MIN = -1000;
@@ -7075,8 +6957,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const activeBeams = GameState.effects.activeBeams;
   const beamCasts = GameState.effects.beamCasts;
   const laserConeCasts = GameState.effects.laserConeCasts;
-  GameState.effects.bladeSweepCasts = GameState.effects.bladeSweepCasts || [];
-  const bladeSweepCasts = GameState.effects.bladeSweepCasts;
   GameState.effects.cleaveCrushCasts = GameState.effects.cleaveCrushCasts || [];
   const cleaveCrushCasts = GameState.effects.cleaveCrushCasts;
   GameState.effects.bulletStormCasts = GameState.effects.bulletStormCasts || [];
@@ -7095,16 +6975,10 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const duskwaveVolleys = GameState.effects.duskwaveVolleys;
   GameState.effects.dawnfallBarrageCasts = GameState.effects.dawnfallBarrageCasts || [];
   const dawnfallBarrageCasts = GameState.effects.dawnfallBarrageCasts;
-  GameState.effects.beaconOfNightCasts = GameState.effects.beaconOfNightCasts || [];
-  GameState.effects.beaconOfNightLocks = GameState.effects.beaconOfNightLocks || [];
-  const beaconOfNightCasts = GameState.effects.beaconOfNightCasts;
-  const beaconOfNightLocks = GameState.effects.beaconOfNightLocks;
   GameState.effects.scarecrowStormCasts = GameState.effects.scarecrowStormCasts || [];
   const scarecrowStormCasts = GameState.effects.scarecrowStormCasts;
   GameState.effects.scarecrowStormZones = GameState.effects.scarecrowStormZones || [];
   const scarecrowStormZones = GameState.effects.scarecrowStormZones;
-  GameState.effects.blazingFanCasts = GameState.effects.blazingFanCasts || [];
-  const blazingFanCasts = GameState.effects.blazingFanCasts;
   GameState.effects.sirensKissCasts = GameState.effects.sirensKissCasts || [];
   const sirensKissCasts = GameState.effects.sirensKissCasts;
   GameState.effects.shiverSpikeCasts = GameState.effects.shiverSpikeCasts || [];
@@ -7141,6 +7015,20 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const plasmaFissionCasts = GameState.effects.plasmaFissionCasts;
   const skyScoutFlights = GameState.effects.skyScoutFlights;
   const skyScoutVisionSources = GameState.effects.skyScoutVisionSources;
+  GameState.effects.spinningAxesInHand = GameState.effects.spinningAxesInHand || [];
+  const spinningAxesInHand = GameState.effects.spinningAxesInHand;
+  GameState.effects.spinningAxeFlights = GameState.effects.spinningAxeFlights || [];
+  const spinningAxeFlights = GameState.effects.spinningAxeFlights;
+  GameState.effects.spinningAxeMarkers = GameState.effects.spinningAxeMarkers || [];
+  const spinningAxeMarkers = GameState.effects.spinningAxeMarkers;
+  GameState.effects.scoutflareBombCasts = GameState.effects.scoutflareBombCasts || [];
+  const scoutflareBombCasts = GameState.effects.scoutflareBombCasts;
+  GameState.effects.scoutflareProjectiles = GameState.effects.scoutflareProjectiles || [];
+  const scoutflareProjectiles = GameState.effects.scoutflareProjectiles;
+  GameState.effects.scoutflareVisionSources = GameState.effects.scoutflareVisionSources || [];
+  const scoutflareVisionSources = GameState.effects.scoutflareVisionSources;
+  GameState.effects.scoutflareRevealRecords = GameState.effects.scoutflareRevealRecords || [];
+  const scoutflareRevealRecords = GameState.effects.scoutflareRevealRecords;
   const skyScoutChargeState = GameState.effects.skyScoutState || (GameState.effects.skyScoutState = { charges: 2, maxCharges: 2, rechargeTimer: 0 });
   GameState.effects.trapVisionSources = GameState.effects.trapVisionSources || [];
   const trapVisionSources = GameState.effects.trapVisionSources;
@@ -7169,12 +7057,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const verdictSalvoProjectiles = GameState.effects.verdictSalvoProjectiles;
   const arcaneRiteModes = GameState.effects.arcaneRiteModes;
   const arcaneRiteExplosions = GameState.effects.arcaneRiteExplosions;
-  GameState.effects.scoutflareBombCasts = GameState.effects.scoutflareBombCasts || [];
-  const scoutflareBombCasts = GameState.effects.scoutflareBombCasts;
-  GameState.effects.scoutflareVisionSources = GameState.effects.scoutflareVisionSources || [];
-  const scoutflareVisionSources = GameState.effects.scoutflareVisionSources;
-  GameState.effects.scoutflareRevealRecords = GameState.effects.scoutflareRevealRecords || [];
-  const scoutflareRevealRecords = GameState.effects.scoutflareRevealRecords;
   GameState.effects.horizonRocketCasts = GameState.effects.horizonRocketCasts || [];
   const horizonRocketCasts = GameState.effects.horizonRocketCasts;
   GameState.effects.celestialCrashCasts = GameState.effects.celestialCrashCasts || [];
@@ -7195,7 +7077,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   GameState.effects.eventHorizons = GameState.effects.eventHorizons || [];
   const eventHorizonCasts = GameState.effects.eventHorizonCasts;
   const eventHorizons = GameState.effects.eventHorizons;
-  GameState.effects.flareguardHasteBuffs = GameState.effects.flareguardHasteBuffs || [];
   GameState.effects.quiverstormBuffs = GameState.effects.quiverstormBuffs || [];
   GameState.effects.frenziedSurgeAttackBuffs = GameState.effects.frenziedSurgeAttackBuffs || [];
   GameState.effects.frenziedSurgeMoveBuffs = GameState.effects.frenziedSurgeMoveBuffs || [];
@@ -7203,7 +7084,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   GameState.effects.phantomOverdriveCasts = GameState.effects.phantomOverdriveCasts || [];
   GameState.effects.phantomOverdriveAttackBuffs = GameState.effects.phantomOverdriveAttackBuffs || [];
   GameState.effects.phantomOverdriveMoveBuffs = GameState.effects.phantomOverdriveMoveBuffs || [];
-  const flareguardHasteBuffs = GameState.effects.flareguardHasteBuffs;
   const quiverstormBuffs = GameState.effects.quiverstormBuffs;
   const frenziedSurgeAttackBuffs = GameState.effects.frenziedSurgeAttackBuffs;
   const frenziedSurgeMoveBuffs = GameState.effects.frenziedSurgeMoveBuffs;
@@ -7211,26 +7091,14 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const phantomOverdriveCasts = GameState.effects.phantomOverdriveCasts;
   const phantomOverdriveAttackBuffs = GameState.effects.phantomOverdriveAttackBuffs;
   const phantomOverdriveMoveBuffs = GameState.effects.phantomOverdriveMoveBuffs;
-  GameState.effects.dualfireSwapState = GameState.effects.dualfireSwapState || {
-    form: 'minigun',
-    stacks: [],
-    rocketRevStacks: 0
-  };
-  const dualfireSwapState = GameState.effects.dualfireSwapState;
   GameState.effects.hailboundTempestCasts = GameState.effects.hailboundTempestCasts || [];
   GameState.effects.hailboundTempests = GameState.effects.hailboundTempests || [];
   const hailboundTempestCasts = GameState.effects.hailboundTempestCasts;
   const hailboundTempests = GameState.effects.hailboundTempests;
-  GameState.effects.braceCasts = GameState.effects.braceCasts || [];
-  const braceCasts = GameState.effects.braceCasts;
-  GameState.effects.weepingAuras = GameState.effects.weepingAuras || [];
-  const weepingAuras = GameState.effects.weepingAuras;
   GameState.effects.reboundOrbCasts = GameState.effects.reboundOrbCasts || [];
   const reboundOrbCasts = GameState.effects.reboundOrbCasts;
   const piercingArrowProjectiles = GameState.effects.piercingArrowProjectiles;
   const plasmaFissionProjectiles = GameState.effects.plasmaFissionProjectiles;
-  GameState.effects.plasmaPursuitDashes = GameState.effects.plasmaPursuitDashes || [];
-  const plasmaPursuitDashes = GameState.effects.plasmaPursuitDashes;
   GameState.effects.expandingShotCasts = GameState.effects.expandingShotCasts || [];
   GameState.effects.expandingShotProjectiles = GameState.effects.expandingShotProjectiles || [];
   const expandingShotCasts = GameState.effects.expandingShotCasts;
@@ -7263,8 +7131,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const scatterCharges = GameState.effects.scatterCharges || (GameState.effects.scatterCharges = []);
   GameState.effects.skyhookSwingCasts = GameState.effects.skyhookSwingCasts || [];
   const skyhookSwingCasts = GameState.effects.skyhookSwingCasts;
-  GameState.effects.runicPassages = GameState.effects.runicPassages || [];
-  const runicPassages = GameState.effects.runicPassages;
   GameState.effects.flipbladeCasts = GameState.effects.flipbladeCasts || [];
   GameState.effects.flipbladeProjectiles = GameState.effects.flipbladeProjectiles || [];
   GameState.effects.flipbladeMarks = GameState.effects.flipbladeMarks || [];
@@ -7283,8 +7149,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const trailblazePatches = GameState.effects.trailblazePatches;
   GameState.effects.sandRushDashes = GameState.effects.sandRushDashes || [];
   const sandRushDashes = GameState.effects.sandRushDashes;
-  GameState.effects.razorWhirlCasts = GameState.effects.razorWhirlCasts || [];
-  const razorWhirlCasts = GameState.effects.razorWhirlCasts;
   GameState.effects.shadowPursuitCasts = GameState.effects.shadowPursuitCasts || [];
   const shadowPursuitCasts = GameState.effects.shadowPursuitCasts;
   GameState.effects.linkLashCasts = GameState.effects.linkLashCasts || [];
@@ -7356,7 +7220,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const stoneGazeEffects = GameState.effects.stoneGazeEffects;
   wildRushState.ready = Boolean(wildRushState.ready);
   wildRushState.expiresAt = Math.max(0, Number(wildRushState.expiresAt) || 0);
-  let flareguardMoveMultiplier = 1;
   let frenziedSurgeMoveMultiplier = 1;
   let strideSurgeMoveMultiplier = 1;
   let phantomOverdriveMoveMultiplier = 1;
@@ -7467,25 +7330,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'damage', label: 'Damage per projectile', unit: ' dmg', min: 0, max: 400, step: 5, value: 90 }
       ]
     },
-    blade_sweep: {
-      id: 'blade_sweep',
-      name: 'Blade Sweep',
-      shortName: 'Sweep',
-      description: 'Sweep a fan of axes along a line, damaging enemies, shoving them sideways, and slowing them.',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 40000, step: 50, value: 15000 },
-        { key: 'castTimeMs', label: 'Cast time', unit: 'ms', min: 0, max: 2000, step: 5, value: 250 },
-        { key: 'rangePx', label: 'Range', unit: 'px', min: 0, max: 1500, step: 5, value: 1100 },
-        { key: 'widthPx', label: 'Blade width', unit: 'px', min: 0, max: 200, step: 1, value: 32 },
-        { key: 'bladeCount', label: 'Axes', unit: '', min: 1, max: 5, step: 1, value: 3 },
-        { key: 'bladeSpacingPx', label: 'Fan spacing', unit: 'px', min: 0, max: 300, step: 5, value: 130 },
-        { key: 'projectileSpeedPxS', label: 'Throw speed', unit: 'px/s', min: 0, max: 3000, step: 10, value: 1400, scale: 'speed' },
-        { key: 'damage', label: 'Damage', unit: ' dmg', min: 0, max: 500, step: 5, value: 180 },
-        { key: 'slowPct', label: 'Slow', unit: '%', min: 0, max: 100, step: 1, value: 30 },
-        { key: 'slowDurationMs', label: 'Slow duration', unit: 'ms', min: 0, max: 5000, step: 25, value: 2000 },
-        { key: 'knockbackDistancePx', label: 'Knockback distance', unit: 'px', min: 0, max: 400, step: 5, value: 220, scale: 'size' }
-      ]
-    },
     grab: {
       id: 'grab',
       name: 'Grasp of Nol-Tar',
@@ -7539,19 +7383,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'postLockoutMs', label: 'Post-lockout', unit: 'ms', min: 0, max: 2000, step: 10, value: 100 }
       ]
     },
-    break_and_brace: {
-      id: 'break_and_brace',
-      name: 'Break and Brace',
-      shortName: 'Brace',
-      description: 'Shake off crowd control and brace, greatly reducing incoming damage for a few seconds.',
-      castType: 'quick',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 200000, step: 50, value: 100000 },
-        { key: 'castTimeMs', label: 'Cast time', unit: 'ms', min: 0, max: 5000, step: 25, value: 250 },
-        { key: 'damageReductionPct', label: 'Damage reduction', unit: '%', min: 0, max: 100, step: 1, value: 60 },
-        { key: 'damageReductionDurationMs', label: 'Damage reduction duration', unit: 'ms', min: 0, max: 15000, step: 25, value: 7000 }
-      ]
-    },
     link_lash: {
       id: 'link_lash',
       name: 'Link Lash',
@@ -7575,22 +7406,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'slamRadiusPx', label: 'Slam radius', unit: 'px', min: 0, max: 800, step: 5, value: 200, scale: 'size' },
         { key: 'rootDurationMs', label: 'Root duration', unit: 'ms', min: 0, max: 3000, step: 25, value: 500 },
         { key: 'slamStunMs', label: 'Slam stun', unit: 'ms', min: 0, max: 2000, step: 10, value: 250 }
-      ]
-    },
-    dualfire_swap: {
-      id: 'dualfire_swap',
-      name: 'Dualfire Shift',
-      shortName: 'Dualfire',
-      description: 'Toggle between Pow-Pow and Fishbones, stacking Rev\'d up attack speed on the minigun before launching a booming rocket shot.',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 20000, step: 50, value: 900 },
-        { key: 'stackDurationMs', label: 'Rev duration', unit: 'ms', min: 0, max: 10000, step: 50, value: 2500 },
-        { key: 'maxStacks', label: 'Max Rev stacks', min: 1, max: 5, step: 1, value: 3 },
-        { key: 'stackAttackSpeedPct', label: 'Rev\'d attack speed', unit: '%', min: 0, max: 120, step: 5, value: 15 },
-        { key: 'rangeBonus', label: 'Fishbones range bonus', unit: 'px', min: 0, max: 400, step: 5, value: 150 },
-        { key: 'rocketDamagePct', label: 'Fishbones damage', unit: '%', min: 100, max: 200, step: 5, value: 110 },
-        { key: 'splashRadius', label: 'Fishbones splash radius', unit: 'px', min: 0, max: 250, step: 5, value: 120 },
-        { key: 'attackSpeedPenaltyPct', label: 'Fishbones speed penalty', unit: '%', min: 0, max: 50, step: 1, value: 10 }
       ]
     },
     bone_skewer: {
@@ -7637,20 +7452,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'slowMinRangePx', label: 'Slow triggers past', unit: 'px', min: 0, max: 1000, step: 5, value: 120, scale: 'size' },
         { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 20000, step: 25, value: 1500 },
         { key: 'castTimeMs', label: 'Cast time', unit: 'ms', min: 0, max: 1000, step: 5, value: 250 }
-      ]
-    },
-    blazing_fan: {
-      id: 'blazing_fan',
-      name: 'Blazing Fan',
-      shortName: 'Blaze',
-      description: 'Unleash a searing fan of flame in front of you after a brief windup.',
-      castType: 'quickIndicator',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 20000, step: 25, value: 7000 },
-        { key: 'castTimeMs', label: 'Cast time', unit: 'ms', min: 0, max: 2000, step: 5, value: 250 },
-        { key: 'coneRangePx', label: 'Cone range', unit: 'px', min: 0, max: 1500, step: 5, value: 600, scale: 'size' },
-        { key: 'coneWidthPx', label: 'Cone width', unit: 'px', min: 0, max: 2000, step: 5, value: 550, scale: 'size' },
-        { key: 'damage', label: 'Damage', unit: ' dmg', min: 0, max: 2000, step: 5, value: 220 }
       ]
     },
     laserCone: {
@@ -7756,23 +7557,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'stunDurationMs', label: 'Airborne duration', unit: 'ms', min: 0, max: 3000, step: 25, value: 1000 }
       ]
     },
-    flareguard_surge: {
-      id: 'flareguard_surge',
-      name: 'Flareguard Surge',
-      shortName: 'Flareguard',
-      description: 'Ignite a protective flare around yourself, gaining a brief shield and burst of speed while scorching attackers who break through.',
-      castType: 'quick',
-      fields: [
-        { key: 'cooldownMs',         label: 'Cooldown',            unit: 'ms',   min: 0, max: 60000, step: 50,  value: 12000 },
-        { key: 'castTimeMs',         label: 'Cast time',           unit: 'ms',   min: 0, max: 3000,  step: 25,  value: 0 },
-        { key: 'shieldAmount',       label: 'Shield amount',       unit: ' hp',  min: 0, max: 5000,  step: 5,   value: 240 },
-        { key: 'shieldDurationMs',   label: 'Shield duration',     unit: 'ms',   min: 0, max: 10000, step: 25,  value: 3000 },
-        { key: 'retaliationDamage',  label: 'Backlash damage',     unit: ' dmg', min: 0, max: 1000,  step: 5,   value: 80 },
-        { key: 'moveSpeedStartPct',  label: 'Haste at start',      unit: '%',    min: 0, max: 200,   step: 1,   value: 50 },
-        { key: 'moveSpeedEndPct',    label: 'Haste after decay',   unit: '%',    min: 0, max: 200,   step: 1,   value: 20 },
-        { key: 'moveSpeedDurationMs',label: 'Haste duration',      unit: 'ms',   min: 0, max: 10000, step: 25,  value: 1500 }
-      ]
-    },
     rage_pulse: {
       id: 'rage_pulse',
       name: 'Rage Pulse',
@@ -7857,21 +7641,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'executeDamageMultiplier', label: 'Execute damage multiplier', unit: 'x', min: 1, max: 5, step: 0.1, value: 2 }
       ]
     },
-    razor_whirl: {
-      id: 'razor_whirl',
-      name: 'Razor Whirl',
-      shortName: 'Whirl',
-      description: 'Snap into a tight spin that mauls nearby foes and nearly roots them. Dash or reposition quickly to whirl a second time at no extra cost.',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 120000, step: 50, value: 12000 },
-        { key: 'castTimeMs', label: 'Lockout time', unit: 'ms', min: 0, max: 2000, step: 5, value: 225 },
-        { key: 'radiusPx', label: 'Spin radius', unit: 'px', min: 0, max: 1200, step: 5, value: 325, scale: 'size' },
-        { key: 'damage', label: 'Damage per spin', unit: ' dmg', min: 0, max: 800, step: 5, value: 180 },
-        { key: 'slowPct', label: 'Slow', unit: '%', min: 0, max: 100, step: 1, value: 99 },
-        { key: 'slowDurationMs', label: 'Slow duration', unit: 'ms', min: 0, max: 5000, step: 25, value: 1000 },
-        { key: 'followupWindowMs', label: 'Follow-up window', unit: 'ms', min: 0, max: 2000, step: 25, value: 275 }
-      ]
-    },
     frenzied_surge: {
       id: 'frenzied_surge',
       name: 'Frenzied Surge',
@@ -7922,22 +7691,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'minionExecuteThresholdPct', label: 'Minion execute threshold', unit: '%', min: 0, max: 100, step: 1, value: 35 },
         { key: 'minionExecuteMultiplier', label: 'Execute multiplier', unit: 'x', min: 1, max: 5, step: 0.1, value: 2 },
         { key: 'nonMinionSubsequentPct', label: 'Champion follow-up damage', unit: '%', min: 0, max: 100, step: 1, value: 25 }
-      ]
-    },
-    runic_passage: {
-      id: 'runic_passage',
-      name: 'Runic Passage',
-      shortName: 'Passage',
-      description: 'Etch a glowing corridor through nearby terrain and launch yourself to the far side.',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 40000, step: 50, value: 22000 },
-        { key: 'castTimeMs', label: 'Cast time', unit: 'ms', min: 0, max: 2000, step: 25, value: 250 },
-        { key: 'maxRangePx', label: 'Terrain range', unit: 'px', min: 0, max: 1800, step: 5, value: 1200, scale: 'size' },
-        { key: 'widthPx', label: 'Corridor width', unit: 'px', min: 0, max: 260, step: 1, value: 64, scale: 'size' },
-        { key: 'entryRangePx', label: 'Entry range', unit: 'px', min: 0, max: 600, step: 1, value: 140, scale: 'size' },
-        { key: 'durationMs', label: 'Duration', unit: 'ms', min: 0, max: 20000, step: 50, value: 10000 },
-        { key: 'speedBonusPct', label: 'Speed bonus', unit: '%', min: 0, max: 200, step: 1, value: 33 },
-        { key: 'travelSpeedPxS', label: 'Travel speed', unit: 'px/s', min: 0, max: 4000, step: 10, value: 2200, scale: 'speed' }
       ]
     },
     flipblade_pursuit: {
@@ -8504,21 +8257,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'split_trigger',           label: 'Split trigger (0=recast,1=collision,2=end)', unit: '', min: 0, max: 2, step: 1, value: 1 }
       ]
     },
-    plasma_pursuit: {
-      id: 'plasma_pursuit',
-      name: 'Plasma Pursuit',
-      shortName: 'Pursuit',
-      description: 'Lock onto a plasma-marked foe, shield yourself, dash to their flank, and refresh the shield timer when you arrive.',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 40000, step: 50, value: 10000 },
-        { key: 'targetRangePx', label: 'Target range', unit: 'px', min: 0, max: 4000, step: 5, value: 2400, scale: 'size' },
-        { key: 'dashDistancePx', label: 'Dash distance', unit: 'px', min: 0, max: 4000, step: 5, value: 2200, scale: 'size' },
-        { key: 'approachDistancePx', label: 'Approach buffer', unit: 'px', min: 0, max: 400, step: 5, value: 48, scale: 'size' },
-        { key: 'dashSpeedPxS', label: 'Dash speed', unit: 'px/s', min: 0, max: 6000, step: 50, value: 3200, scale: 'speed' },
-        { key: 'shieldAmount', label: 'Shield strength', unit: ' dmg', min: 0, max: 600, step: 5, value: 110 },
-        { key: 'shieldDurationMs', label: 'Shield duration', unit: 'ms', min: 0, max: 5000, step: 25, value: 2000 }
-      ]
-    },
     scatter_charge: {
       id: 'scatter_charge',
       name: 'Scatter Charge',
@@ -8597,46 +8335,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'cancelCooldownMs',    label: 'Cooldown on cancel',   unit: 'ms',   min: 0,     max: 60000,  step: 50,  value: 5000 }
       ]
     },
-    horizon_rocket: {
-      id: 'horizon_rocket',
-      name: 'Horizon Breaker',
-      shortName: 'Skybreaker',
-      description: 'Launch a global rocket whose punch grows with distance, then splashes weaker damage around the impact.',
-      castType: 'quickIndicator',
-      fields: [
-        { key: 'cooldownMs',          label: 'Cooldown',          unit: 'ms',   min: 0,    max: 200000, step: 50, value: 12000 },
-        { key: 'castTimeMs',          label: 'Cast time',         unit: 'ms',   min: 0,    max: 5000,   step: 25, value: 600 },
-        { key: 'maxRangePx',          label: 'Launch range',      unit: 'px',   min: 0,    max: 8000,   step: 10, value: 6000 },
-        { key: 'projectileSpeedPxS',  label: 'Rocket speed',      unit: 'px/s', min: 0,    max: 6000,   step: 10, value: 2200, scale: 'speed' },
-        { key: 'outerRadiusPx',       label: 'Blast radius',      unit: 'px',   min: 0,    max: 2000,   step: 5,  value: 360, scale: 'size' },
-        { key: 'innerRadiusPx',       label: 'Inner radius',      unit: 'px',   min: 0,    max: 2000,   step: 5,  value: 180, scale: 'size' },
-        { key: 'damage',              label: 'Base damage',       unit: ' dmg', min: 0,    max: 1200,   step: 5,  value: 360 },
-        { key: 'damageMinPct',        label: 'Min distance %',    unit: '%',    min: 0,    max: 100,    step: 1,  value: 10 },
-        { key: 'damageMaxPct',        label: 'Max distance %',    unit: '%',    min: 0,    max: 200,    step: 1,  value: 100 },
-        { key: 'secondaryDamagePct',  label: 'Splash damage %',   unit: '%',    min: 0,    max: 100,    step: 1,  value: 80 }
-      ]
-    },
-    scoutflare_bomb: {
-      id: 'scoutflare_bomb',
-      name: 'Scoutflare Bomb',
-      shortName: 'Scoutflare',
-      description: 'Hurl a luminous bomb that lights up its flight path, then erupts to damage enemies while briefly revealing the impact zone and any targets it hits.',
-      fields: [
-        { key: 'cooldownMs',              label: 'Cooldown',              unit: 'ms',   min: 0,    max: 20000, step: 25, value: 9000 },
-        { key: 'castTimeMs',              label: 'Cast time',             unit: 'ms',   min: 0,    max: 2000,  step: 25, value: 250 },
-        { key: 'maxRangePx',              label: 'Range',                 unit: 'px',   min: 0,    max: 4000,  step: 5,  value: 825, scale: 'size' },
-        { key: 'projectileSpeedPxS',      label: 'Travel speed',          unit: 'px/s', min: 0,    max: 4000,  step: 5,  value: 1100, scale: 'speed' },
-        { key: 'aoeRadiusPx',             label: 'Impact radius',         unit: 'px',   min: 0,    max: 800,   step: 5,  value: 275 },
-        { key: 'damage',                  label: 'Damage',                unit: ' dmg', min: 0,    max: 1000,  step: 5,  value: 240 },
-        { key: 'impactVisionRadiusPx',    label: 'Impact sight radius',   unit: 'px',   min: 0,    max: 1200,  step: 5,  value: 500, scale: 'size' },
-        { key: 'impactVisionDurationMs',  label: 'Impact sight duration', unit: 'ms',   min: 0,    max: 20000, step: 100,value: 6000 },
-        { key: 'pathVisionRadiusPx',      label: 'Trail sight radius',    unit: 'px',   min: 0,    max: 800,   step: 5,  value: 260 },
-        { key: 'pathVisionDurationMs',    label: 'Trail sight duration',  unit: 'ms',   min: 0,    max: 2000, step: 50, value: 250 },
-        { key: 'pathVisionSpacingPx',     label: 'Trail spacing',         unit: 'px',   min: 5,    max: 600,   step: 5,  value: 220 },
-        { key: 'championRevealRadiusPx',  label: 'Target reveal radius',  unit: 'px',   min: 0,    max: 1200,  step: 5,  value: 320 },
-        { key: 'championRevealDurationMs',label: 'Target reveal duration',unit: 'ms',   min: 0,    max: 20000, step: 100,value: 6000 }
-      ]
-    },
     celestial_crash: {
       id: 'celestial_crash',
       name: 'Celestial Crash',
@@ -8662,23 +8360,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'shockDurationMs',      label: 'Shockwave duration',    unit: 'ms',   min: 0,     max: 10000,  step: 25,  value: 3000 }
       ]
     },
-    beacon_of_night: {
-      id: 'beacon_of_night',
-      name: 'Beacon of Night',
-      shortName: 'Beacon',
-      description: 'Fire a lunar spotlight that locks onto the first champion hit and rains follow-up blasts on anyone in the glow.',
-      fields: [
-        { key: 'cooldownMs',        label: 'Cooldown',          unit: 'ms',   min: 0,     max: 200000, step: 50,  value: 95000 },
-        { key: 'castTimeMs',        label: 'Cast time',         unit: 'ms',   min: 0,     max: 5000,   step: 25,  value: 600 },
-        { key: 'projectileRangePx', label: 'Range',             unit: 'px',   min: 0,     max: 4000,   step: 25,  value: 1300 },
-        { key: 'projectileSpeedPxS',label: 'Spotlight speed',   unit: 'px/s', min: 0,     max: 4000,   step: 10,  value: 1000 },
-        { key: 'beamWidth',         label: 'Spotlight width',   unit: 'px',   min: 0,     max: 400,    step: 1,   value: 64 },
-        { key: 'impactRadiusPx',    label: 'Impact radius',     unit: 'px',   min: 0,     max: 600,    step: 5,   value: 300 },
-        { key: 'damage',            label: 'Impact damage',     unit: ' dmg', min: 0,     max: 1000,   step: 5,   value: 175 },
-        { key: 'followupDamage',    label: 'Follow-up damage',  unit: ' dmg', min: 0,     max: 1000,   step: 5,   value: 120 },
-        { key: 'followupDelayMs',   label: 'Follow-up delay',   unit: 'ms',   min: 0,     max: 2000,   step: 25,  value: 300 }
-      ]
-    },
     rite_arcane: {
       id: 'rite_arcane',
       name: 'Rite of the Arcane',
@@ -8695,20 +8376,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'maxRangePx',      label: 'Max targeting range', unit: 'px', min: 0, max: 1000, step: 10, value: 900 },
         { key: 'cancelOnStun',    label: 'Cancelled by stun',   unit: '',   min: 0, max: 1, step: 1, value: 1 },
         { key: 'cancelOnSilence', label: 'Cancelled by silence',unit: '',   min: 0, max: 1, step: 1, value: 0 }
-      ]
-    },
-    weeping_aura: {
-      id: 'weeping_aura',
-      name: 'Weeping Aura',
-      shortName: 'Aura',
-      description: 'Toggle a swirling ring of tears around you, dealing flat damage every 0.5s to nearby foes until you shut it off.',
-      castType: 'quick',
-      fields: [
-        { key: 'cooldownMs',     label: 'Cooldown',        unit: 'ms',  min: 0,    max: 60000, step: 25, value: 1000 },
-        { key: 'radiusPx',       label: 'Damage radius',   unit: 'px',  min: 0,    max: 1200,  step: 5,  value: 350, scale: 'size' },
-        { key: 'tickDamage',     label: 'Damage per tick', unit: ' dmg',min: 0,    max: 2000,  step: 5,  value: 40 },
-        { key: 'tickIntervalMs', label: 'Tick interval',   unit: 'ms',  min: 50,   max: 2000,  step: 25, value: 500 },
-        { key: 'startupDelayMs', label: 'Startup delay',   unit: 'ms',  min: 0,    max: 2000,  step: 25, value: 0 }
       ]
     },
     shiver_maelstrom: {
@@ -8974,7 +8641,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
 
   const abilityIndicatorProfiles = {
     beam: { type: 'line', lengthKey: 'beamLength', widthKey: 'beamWidth', fixedLength: true },
-    beacon_of_night: { type: 'line', lengthKey: 'projectileRangePx', widthKey: 'beamWidth', fixedLength: true },
     focused_lockshot: { type: 'line', lengthKey: 'projectileRangePx', widthKey: 'projectileWidthPx', fixedLength: true },
     grab: { type: 'trapezoid', lengthKey: 'grabRange', startWidthKey: 'grabWidthCenter', endWidthKey: 'grabWidthEdge', fixedLength: true },
     backline_seizure: { type: 'line', lengthKey: 'strikeRangePx', widthKey: 'strikeWidthPx', fixedLength: true },
@@ -8998,12 +8664,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       type: 'line',
       lengthKey: 'projectileRangePx',
       widthKey: 'projectileWidthPx',
-      fixedLength: true
-    },
-    blazing_fan: {
-      type: 'cone',
-      lengthKey: 'coneRangePx',
-      widthKey: 'coneWidthPx',
       fixedLength: true
     },
     sirens_kiss: { type: 'line', lengthKey: 'projectileRangePx', widthKey: 'projectileWidthPx', fixedLength: true },
@@ -9085,17 +8745,13 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     glacial_uplift: { type: 'wall', lengthKey: 'wallLengthPx', widthKey: 'wallThicknessPx', distanceKey: 'maxRangePx', showRangeRing: true },
     mourning_march: { type: 'aoe', radiusKey: 'leashRangePx', distanceKey: 'summonRangePx', showRangeRing: true },
     temporal_veil: { type: 'aoe', radiusKey: 'aoeRadiusPx', distanceKey: 'maxRangePx', showRangeRing: true },
-    horizon_rocket: { type: 'aoe', radiusKey: 'outerRadiusPx', distanceKey: 'maxRangePx', showRangeRing: true, innerRadiusKey: 'innerRadiusPx' },
-    scoutflare_bomb: { type: 'aoe', radiusKey: 'aoeRadiusPx', distanceKey: 'maxRangePx', showRangeRing: true },
     celestial_crash: { type: 'aoe', radiusKey: 'impactRadius', distanceKey: 'maxRangePx', showRangeRing: true },
     inferno_barrage: { type: 'aoe', radiusKey: 'effectRadiusPx', distanceKey: 'rangePx', showRangeRing: true },
     rite_arcane: { type: 'aoe', radiusKey: 'aoeRadiusPx', distanceKey: 'maxRangePx', showRangeRing: true },
     serpents_bloom: { type: 'aoe', radiusKey: 'radiusPx', distanceKey: 'targetRangePx', showRangeRing: true },
     stone_gaze: { type: 'cone', lengthKey: 'targetRangePx', widthKey: 'coneWidthPx', fixedLength: true },
-    edgebreaker_thrust: { type: 'line', lengthKey: 'projectileRangePx', widthKey: 'projectileWidthPx', fixedLength: true },
     spiral_gale: { type: 'cone', lengthKey: 'coneRangePx', widthKey: 'coneWidthPx', fixedLength: true },
-    phantom_return: { type: 'blink', rangeKey: 'dashDistancePx' },
-    skybound_seal: { type: 'line', lengthKey: 'projectileRangePx', widthKey: 'projectileWidthPx', fixedLength: true }
+    phantom_return: { type: 'blink', rangeKey: 'dashDistancePx' }
   };
 
   const abilitySystem = createAbilitySystem({
@@ -10913,6 +10569,27 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   }
 
   Object.assign(abilityDefinitions, {
+    spinning_axe: {
+      id: 'spinning_axe',
+      name: 'Spinning Axe',
+      shortName: 'Spinning',
+      description: 'Empower your next basic attack to throw a spinning axe that lands nearby. Catch it to regain the buff.',
+      fields: [
+        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 30000, step: 50, value: 12000 },
+        { key: 'bonusDamage', label: 'Bonus damage', unit: ' dmg', min: 0, max: 400, step: 5, value: 25 },
+        { key: 'maxInHand', label: 'Max axes held', unit: '', min: 1, max: 4, step: 1, value: 2 },
+        { key: 'flightTimeMs', label: 'Flight time', unit: 'ms', min: 0, max: 5000, step: 25, value: 2000 },
+        { key: 'catchWindowMs', label: 'Catch window', unit: 'ms', min: 0, max: 5000, step: 25, value: 1200 },
+        { key: 'catchRadiusPx', label: 'Catch radius', unit: 'px', min: 0, max: 400, step: 5, value: 120, scale: 'size' },
+        { key: 'moveSpeedThreshold', label: 'Move speed threshold', unit: 'px/s', min: 0, max: 600, step: 5, value: 50, scale: 'speed' },
+        { key: 'forwardMinPx', label: 'Forward min distance', unit: 'px', min: 0, max: 500, step: 5, value: 130, scale: 'size' },
+        { key: 'forwardMaxPx', label: 'Forward max distance', unit: 'px', min: 0, max: 500, step: 5, value: 170, scale: 'size' },
+        { key: 'stillMinPx', label: 'Still min distance', unit: 'px', min: 0, max: 300, step: 5, value: 40, scale: 'size' },
+        { key: 'stillMaxPx', label: 'Still max distance', unit: 'px', min: 0, max: 300, step: 5, value: 80, scale: 'size' },
+        { key: 'sideJitterMaxPx', label: 'Side jitter max', unit: 'px', min: 0, max: 200, step: 5, value: 20, scale: 'size' },
+        { key: 'edgeMarginPx', label: 'Edge margin', unit: 'px', min: 0, max: 400, step: 5, value: 50, scale: 'size' }
+      ]
+    },
     ember_bolt: {
       id: 'ember_bolt',
       name: 'Ember Bolt',
@@ -10959,21 +10636,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'bounceRadiusPx', label: 'Bounce radius', unit: 'px', min: 0, max: 1200, step: 5, value: 600 }
       ]
     },
-    crimson_pounce: {
-      id: 'crimson_pounce',
-      name: 'Crimson Pounce',
-      shortName: 'Pounce',
-      description: 'Slash through a single target, briefly stunning and reducing their resistances.',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 20000, step: 50, value: 10000 },
-        { key: 'dashDistancePx', label: 'Dash distance', unit: 'px', min: 0, max: 1200, step: 5, value: 475 },
-        { key: 'dashSpeedPxS', label: 'Dash speed', unit: 'px/s', min: 0, max: 4000, step: 10, value: 1500, scale: 'speed' },
-        { key: 'damage', label: 'Damage', unit: ' dmg', min: 0, max: 400, step: 5, value: 150 },
-        { key: 'stunDurationMs', label: 'Stun duration', unit: 'ms', min: 0, max: 2000, step: 25, value: 850 },
-        { key: 'armorReductionPct', label: 'Armor reduction %', unit: '%', min: 0, max: 100, step: 1, value: 15 },
-        { key: 'magicResReductionPct', label: 'Magic resist reduction %', unit: '%', min: 0, max: 100, step: 1, value: 15 }
-      ]
-    },
     frenzied_slash: {
       id: 'frenzied_slash',
       name: 'Frenzied Slash',
@@ -11000,21 +10662,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'splashDamagePct', label: 'Splash damage', unit: '% AD', min: 0, max: 200, step: 5, value: 25 },
         { key: 'splashRadiusPx', label: 'Splash radius', unit: 'px', min: 0, max: 800, step: 5, value: 325 },
         { key: 'charges', label: 'Empowered attacks', unit: '', min: 1, max: 6, step: 1, value: 3 }
-      ]
-    },
-    howling_scream: {
-      id: 'howling_scream',
-      name: 'Howling Scream',
-      shortName: 'Scream',
-      description: 'Charge a scream that detonates into a slowing cone while letting you heal through the chaos.',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 40000, step: 50, value: 16000 },
-        { key: 'castTimeMs', label: 'Charge time', unit: 'ms', min: 0, max: 2000, step: 25, value: 1000 },
-        { key: 'projectileRangePx', label: 'Range', unit: 'px', min: 0, max: 2000, step: 5, value: 600 },
-        { key: 'damage', label: 'Damage', unit: ' dmg', min: 0, max: 400, step: 5, value: 210 },
-        { key: 'slowPct', label: 'Slow', unit: '%', min: 0, max: 100, step: 1, value: 80 },
-        { key: 'slowDurationMs', label: 'Slow duration', unit: 'ms', min: 0, max: 4000, step: 25, value: 2000 },
-        { key: 'healPct', label: 'Heal per tick', unit: '% max', min: 0, max: 10, step: 0.1, value: 4 }
       ]
     },
     sweep_strike: {
@@ -11107,36 +10754,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'secondHitCritMultiplierPct', label: 'Critical multiplier', unit: '%', min: 100, max: 250, step: 5, value: 180 }
       ]
     },
-    vindicated_challenge: {
-      id: 'vindicated_challenge',
-      name: 'Vindicated Challenge',
-      shortName: 'Challenge',
-      description: 'Declare the duel, then heal allies near the aftermath zone while the marked foe remains vulnerable.',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 240000, step: 50, value: 110000 },
-        { key: 'targetRangePx', label: 'Target range', unit: 'px', min: 0, max: 2000, step: 5, value: 500 },
-        { key: 'zoneRadiusPx', label: 'Zone radius', unit: 'px', min: 0, max: 1000, step: 5, value: 550 },
-        { key: 'durationMs', label: 'Zone duration', unit: 'ms', min: 0, max: 10000, step: 25, value: 5000 },
-        { key: 'healPerTick', label: 'Heal per tick', unit: ' hp', min: 0, max: 200, step: 1, value: 20 },
-        { key: 'tickIntervalMs', label: 'Heal tick', unit: 'ms', min: 50, max: 1000, step: 25, value: 250 },
-        { key: 'bonusMoveSpeed', label: 'Move speed near target', unit: '%', min: 0, max: 100, step: 5, value: 20 },
-        { key: 'vitalMarkers', label: 'Visible vitals', unit: '', min: 0, max: 4, step: 1, value: 4 }
-      ]
-    },
-    edgebreaker_thrust: {
-      id: 'edgebreaker_thrust',
-      name: 'Edgebreaker Thrust',
-      shortName: 'Breaker',
-      description: 'Lunge forward with a spirit blade, striking through enemies and building stacks for a stormy follow up.',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 20000, step: 50, value: 4000 },
-        { key: 'castTimeMs', label: 'Cast time', unit: 'ms', min: 0, max: 2000, step: 25, value: 350 },
-        { key: 'projectileRangePx', label: 'Thrust range', unit: 'px', min: 0, max: 2000, step: 5, value: 1050 },
-        { key: 'projectileWidthPx', label: 'Thrust width', unit: 'px', min: 0, max: 400, step: 5, value: 160 },
-        { key: 'dashDistancePx', label: 'Dash distance', unit: 'px', min: 0, max: 800, step: 5, value: 450 },
-        { key: 'damage', label: 'Damage', unit: ' dmg', min: 0, max: 600, step: 5, value: 160 }
-      ]
-    },
     spiral_gale: {
       id: 'spiral_gale',
       name: 'Spiral Gale',
@@ -11165,50 +10782,30 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
         { key: 'recastWindowMs', label: 'Recast window', unit: 'ms', min: 0, max: 10000, step: 25, value: 5000 }
       ]
     },
-    skybound_seal: {
-      id: 'skybound_seal',
-      name: 'Skybound Seal',
-      shortName: 'Seal',
-      description: 'Mark a long cone, pull strikes toward the landing point, and leave foes airborne as the gust smashes them skyward.',
-      fields: [
-        { key: 'cooldownMs', label: 'Cooldown', unit: 'ms', min: 0, max: 240000, step: 50, value: 110000 },
-        { key: 'castTimeMs', label: 'Cast time', unit: 'ms', min: 0, max: 3000, step: 25, value: 750 },
-        { key: 'projectileRangePx', label: 'Strike range', unit: 'px', min: 0, max: 2000, step: 5, value: 1000 },
-        { key: 'projectileWidthPx', label: 'Strike width', unit: 'px', min: 0, max: 400, step: 5, value: 225 },
-        { key: 'damage', label: 'Damage', unit: ' dmg', min: 0, max: 900, step: 5, value: 520 },
-        { key: 'stunDurationMs', label: 'Pull knock-up', unit: 'ms', min: 0, max: 2000, step: 25, value: 750 }
-      ]
-    }
   });
 
   const abilityHandlers = {
+    spinning_axe: castSpinningAxeAbility,
     beam: castBeamAbility,
     serpents_bloom: castVenomBloomAbility,
-    beacon_of_night: castBeaconOfNightAbility,
     laserCone: castLaserConeAbility,
-    blade_sweep: castBladeSweepAbility,
     blade_cyclone: castBladeCycloneAbility,
     duskwave_infernum: castDuskwaveAbility,
     sirens_kiss: castSirensKissAbility,
     shiver_spike: castShiverSpikeAbility,
     bedrock_burst: castBedrockBurstAbility,
-    flareguard_surge: castFlareguardSurgeAbility,
     rage_pulse: castRagePulseAbility,
     kunai_fanburst: castKunaiFanburstAbility,
     slam: castSlamAbility,
     grab: castGrabAbility,
     wrapdash: castWrapdashAbility,
     backline_seizure: castBacklineSeizureAbility,
-    break_and_brace: castBreakAndBraceAbility,
     link_lash: castLinkLashAbility,
-    dualfire_swap: castDualfireShiftAbility,
     gravity_surge: castGravitySurgeAbility,
     bone_skewer: castBoneSkewerAbility,
     astral_snare: castAstralSnareAbility,
-    blazing_fan: castBlazingFanAbility,
     blinkingBolt: castBlinkingBoltAbility,
     ember_waltz: castEmberWaltzAbility,
-    razor_whirl: castRazorWhirlAbility,
     cascade_barrage: castCascadeBarrageAbility,
     frenzied_surge: castFrenziedSurgeAbility,
     royal_onslaught: castRoyalOnslaughtAbility,
@@ -11227,7 +10824,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     chrono_loop: castChronoLoopAbility,
     skull_rush: castSkullRushAbility,
     skyhook_strafe: castSkyhookStrafeAbility,
-    runic_passage: castRunicPassageAbility,
     twinstrike_pursuit: castTwinstrikePursuitAbility,
     ricochet_lob: castRicochetLobAbility,
     dirge_bloom: castDirgeBloomAbility,
@@ -11236,7 +10832,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     hailbound_tempest: castHailboundTempestAbility,
     frost_surge: castHailboundTempestAbility,
     shiver_maelstrom: castHailboundTempestAbility,
-    weeping_aura: castWeepingAuraAbility,
     proximity_traps: castProximityTrapAbility,
     edgewatch_snare: castProximityTrapAbility,
     scatter_minefield: castProximityTrapAbility,
@@ -11246,7 +10841,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     edgeflare_mark: castEdgeflareMarkAbility,
     focused_lockshot: castFocusedLockshotAbility,
     plasma_fission: castPlasmaFissionAbility,
-    plasma_pursuit: castPlasmaPursuitAbility,
     stone_gaze: castStoneGazeAbility,
     charging_gale: castChargingGaleAbility,
     avalanche_roll: castAvalancheRollAbility,
@@ -11257,8 +10851,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     culling_barrage: castCullingBarrageAbility,
     purging_volley: castCullingBarrageAbility,
     verdict_salvo: castVerdictSalvoAbility,
-    horizon_rocket: castHorizonRocketAbility,
-    scoutflare_bomb: castScoutflareBombAbility,
     temporal_veil: castTemporalVeilAbility,
     celestial_crash: castCelestialCrashAbility,
     skyward_scout: castSkywardScoutAbility,
@@ -13347,156 +12939,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return true;
   }
 
-  function castRazorWhirlAbility(slotIndex, ability){
-    const abilityName = ability && (ability.shortName || ability.name)
-      ? (ability.shortName || ability.name)
-      : 'Razor Whirl';
-    const active = razorWhirlCasts.find(cast => cast && cast.casterRef === player && cast.abilityId === ability.id && !cast.completed);
-    if(active){
-      if(active.state === 'followup'){
-        const hits = performRazorWhirlSpin(active, { followup: true });
-        finishRazorWhirlCast(active, { reason: 'followup' });
-        if(active.casterRef === player){
-          const hitText = hits > 0 ? `hit ${hits} target${hits === 1 ? '' : 's'}` : 'missed';
-          setHudMessage(`${abilityName} follow-up ${hitText}.`);
-        }
-        return { success: true, deferCooldown: true };
-      }
-      setHudMessage(`${abilityName} is already winding up.`);
-      return false;
-    }
-    if(player.casting){
-      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
-      return false;
-    }
-    const cooldownSeconds = abilityCooldownSeconds(ability);
-    const lockout = Math.max(0, Number(abilityFieldValue(ability, 'castTimeMs')) || 0) / 1000;
-    const radius = Math.max(0, Number(abilityFieldValue(ability, 'radiusPx')) || 0);
-    const damage = Math.max(0, Number(abilityFieldValue(ability, 'damage')) || 0);
-    const slowPct = Math.max(0, Number(abilityFieldValue(ability, 'slowPct')) || 0);
-    const slowFraction = Math.max(0, Math.min(1, slowPct / 100));
-    const slowDuration = Math.max(0, Number(abilityFieldValue(ability, 'slowDurationMs')) || 0) / 1000;
-    const followupWindow = Math.max(0, Number(abilityFieldValue(ability, 'followupWindowMs')) || 0) / 1000;
-
-    if(!(radius > 0)){
-      setHudMessage(`${abilityName} needs a spin radius configured.`);
-      return false;
-    }
-    if(!(damage > 0)){
-      setHudMessage(`${abilityName} needs damage configured.`);
-      return false;
-    }
-
-    const cast = {
-      id: `razor-${abilityRuntime.razorWhirlSequence++}`,
-      abilityId: ability && ability.id ? ability.id : 'razor_whirl',
-      abilityName,
-      slotIndex,
-      casterRef: player,
-      cooldownSeconds,
-      state: lockout > 0 ? 'windup' : 'followup',
-      lockout,
-      elapsed: 0,
-      radius,
-      damage,
-      slowFraction,
-      slowDuration,
-      followupWindow,
-      followupElapsed: 0,
-      followupRemaining: followupWindow,
-      spinCount: 0,
-      completed: false,
-      cooldownApplied: false,
-      allowMovementWhileCasting: lockout <= 0,
-      movementSpeedMultiplier: lockout > 0 ? 0 : 1
-    };
-
-    razorWhirlCasts.push(cast);
-    cancelPlayerAttack(false);
-    player.chaseTarget = null;
-    player.navGoal = null;
-    player.nav = null;
-    player.target.x = player.x;
-    player.target.y = player.y;
-    if(lockout > 0){
-      player.casting = cast;
-      setHudMessage(`${abilityName} winding up...`);
-    } else {
-      const hits = performRazorWhirlSpin(cast, { followup: false });
-      cast.state = 'followup';
-      cast.followupElapsed = 0;
-      cast.followupRemaining = followupWindow;
-      setHudMessage(`${abilityName} ${hits > 0 ? `hit ${hits} target${hits === 1 ? '' : 's'}` : 'missed'} - follow-up ready!`);
-    }
-    return { success: true, deferCooldown: true };
-  }
-
-  function performRazorWhirlSpin(cast, { followup = false } = {}){
-    if(!cast) return 0;
-    const caster = cast.casterRef || player;
-    const origin = getSpellOrigin(caster);
-    const centerX = Number.isFinite(origin.x) ? origin.x : (caster && Number.isFinite(caster.x) ? caster.x : player.x);
-    const centerY = Number.isFinite(origin.y) ? origin.y : (caster && Number.isFinite(caster.y) ? caster.y : player.y);
-    const radius = Math.max(0, Number(cast.radius) || 0);
-    const damage = Math.max(0, Number(cast.damage) || 0);
-    const slowFraction = Math.max(0, Math.min(1, Number(cast.slowFraction) || 0));
-    const slowDuration = Math.max(0, Number(cast.slowDuration) || 0);
-    if(!(radius > 0)) return 0;
-
-    let hits = 0;
-    for(const m of minions){
-      if(!m) continue;
-      const practiceTarget = m.isPracticeDummy === true;
-      if(!practiceTarget && !isEnemyMinionForPlayer(m)) continue;
-      if(m.hp <= 0 || m.portalizing > 0) continue;
-      const targetRadius = practiceTarget ? Math.max(minionRadius, Number(m.radius) || minionRadius) : minionRadius;
-      const effectiveRadius = radius + targetRadius;
-      const dx = m.x - centerX;
-      const dy = m.y - centerY;
-      if(dx * dx + dy * dy > effectiveRadius * effectiveRadius) continue;
-      const prevHp = Number(m.hp) || 0;
-      if(damage > 0){
-        m.hp = Math.max(0, prevHp - damage);
-        spawnHitSplat(m.x, m.y - targetRadius, damage);
-      }
-      if(slowFraction > 0){
-        const existingSlow = typeof m.slowPct === 'number' ? m.slowPct : 0;
-        m.slowPct = Math.max(existingSlow, slowFraction);
-        if(slowDuration > 0){
-          m.slowTimer = Math.max(m.slowTimer || 0, slowDuration);
-        }
-      }
-      handlePracticeDummyDamage(m, prevHp);
-      hits += 1;
-    }
-    cast.spinCount = (cast.spinCount || 0) + 1;
-    const startRadius = radius > 0 ? Math.max(16, radius * 0.55) : 18;
-    const endRadius = radius > 0 ? Math.max(radius + 48, radius * 1.05) : 60;
-    flash(centerX, centerY, { startRadius, endRadius, color: followup ? '#ffbfa1' : '#ffd9a1' });
-    return hits;
-  }
-
-  function finishRazorWhirlCast(cast, { reason = 'complete' } = {}){
-    if(!cast) return;
-    if(cast.completed) return;
-    cast.completed = true;
-    if(!cast.cooldownApplied && Number.isFinite(cast.slotIndex)){
-      const cooldownSeconds = Math.max(0, Number(cast.cooldownSeconds) || 0);
-      setAbilitySlotCooldown(cast.slotIndex, cooldownSeconds);
-      cast.cooldownApplied = true;
-    }
-    if(cast.casterRef === player && player.casting === cast){
-      player.casting = null;
-    }
-    const idx = razorWhirlCasts.indexOf(cast);
-    if(idx >= 0){
-      razorWhirlCasts.splice(idx, 1);
-    }
-    if(cast.casterRef === player && reason === 'expired'){
-      setHudMessage(`${cast.abilityName || 'Razor Whirl'} follow-up window closed.`);
-    }
-  }
-
   function endSkyfireVolleyCast(cast, { reason = 'complete', applyCooldown = true, silent = false } = {}){
     if(!cast || cast.ended) return;
     cast.ended = true;
@@ -14330,6 +13772,69 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       setAbilitySlotCooldown(slotIndex, cooldownSeconds);
     }
     setHudMessage(`${abilityName} surged!`);
+    return true;
+  }
+
+  function spinningAxeConfigFromAbility(ability){
+    return {
+      abilityId: ability && ability.id ? ability.id : 'spinning_axe',
+      abilityName: ability && (ability.shortName || ability.name) ? (ability.shortName || ability.name) : 'Spinning Axe',
+      bonusDamage: Math.max(0, Number(abilityFieldValue(ability, 'bonusDamage')) || 0),
+      maxInHand: Math.max(1, Math.round(Number(abilityFieldValue(ability, 'maxInHand')) || 2)),
+      flightTime: Math.max(0, Number(abilityFieldValue(ability, 'flightTimeMs')) || 0) / 1000,
+      catchWindow: Math.max(0, Number(abilityFieldValue(ability, 'catchWindowMs')) || 0) / 1000,
+      catchRadius: Math.max(0, Number(abilityFieldValue(ability, 'catchRadiusPx')) || 0),
+      moveSpeedThreshold: Math.max(0, Number(abilityFieldValue(ability, 'moveSpeedThreshold')) || 0),
+      forwardMin: Math.max(0, Number(abilityFieldValue(ability, 'forwardMinPx')) || 0),
+      forwardMax: Math.max(0, Number(abilityFieldValue(ability, 'forwardMaxPx')) || 0),
+      stillMin: Math.max(0, Number(abilityFieldValue(ability, 'stillMinPx')) || 0),
+      stillMax: Math.max(0, Number(abilityFieldValue(ability, 'stillMaxPx')) || 0),
+      sideJitterMax: Math.max(0, Number(abilityFieldValue(ability, 'sideJitterMaxPx')) || 0),
+      edgeMargin: Math.max(0, Number(abilityFieldValue(ability, 'edgeMarginPx')) || 0)
+    };
+  }
+
+  function castSpinningAxeAbility(slotIndex, ability){
+    if(player.casting){
+      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
+      return false;
+    }
+    const cfg = spinningAxeConfigFromAbility(ability);
+    const abilityName = cfg.abilityName;
+    const cooldownSeconds = abilityCooldownSeconds(ability);
+    if(cfg.flightTime <= 0){
+      setHudMessage(`${abilityName} needs a flight time.`);
+      return false;
+    }
+    if(cfg.catchWindow <= 0 || cfg.catchRadius <= 0){
+      setHudMessage(`${abilityName} needs a catch window and radius.`);
+      return false;
+    }
+
+    const currentHeld = spinningAxesInHand.length;
+    if(currentHeld >= cfg.maxInHand){
+      setHudMessage(`${abilityName} is already at cap (${cfg.maxInHand}).`);
+      return false;
+    }
+
+    const axe = {
+      ...cfg,
+      state: 'IN_HAND',
+      slotIndex: Number.isFinite(slotIndex) ? slotIndex : null
+    };
+    spinningAxesInHand.push(axe);
+
+    cancelPlayerAttack(false);
+    player.attackTarget = null;
+    player.attackWindup = 0;
+    player.attackCooldown = 0;
+    const attackPeriod = Math.max(0, Number(player.attackSpeedMs) || 0) / 1000;
+    setPlayerAttackCooldownFromPeriod(attackPeriod);
+
+    if(Number.isFinite(slotIndex)){
+      setAbilitySlotCooldown(slotIndex, cooldownSeconds);
+    }
+    setHudMessage(`${abilityName} readied (${spinningAxesInHand.length}/${cfg.maxInHand}).`);
     return true;
   }
 
@@ -17966,126 +17471,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return { success: true, deferCooldown: true };
   }
 
-  function findRunicPassageForCaster(caster){
-    if(!caster) return null;
-    return runicPassages.find(passage => passage && passage.casterRef === caster && passage.state === 'open') || null;
-  }
-
-  function beginRunicPassageTravel(passage){
-    if(!passage || passage.state !== 'open') return false;
-    passage.state = 'traveling';
-    passage.travelElapsed = 0;
-    passage.currentX = passage.startX;
-    passage.currentY = passage.startY;
-    if(passage.casterRef === player){
-      player.casting = passage;
-      cancelPlayerAttack(false);
-      player.chaseTarget = null;
-      player.navGoal = null;
-      player.nav = null;
-      player.target.x = player.x;
-      player.target.y = player.y;
-    }
-    flash(passage.startX, passage.startY, { startRadius: 16, endRadius: 38, color: '#b6fdfc' });
-    if(passage.casterRef === player){
-      setHudMessage(`${passage.abilityName || 'Runic Passage'} sweeps you forward!`);
-    }
-    return true;
-  }
-
-  function castRunicPassageAbility(slotIndex, ability){
-    const abilityName = ability && (ability.shortName || ability.name) ? (ability.shortName || ability.name) : 'Runic Passage';
-    const existing = findRunicPassageForCaster(player);
-    if(existing){
-      const entryRange = Math.max(0, Number(existing.entryRange) || 0);
-      const startX = Number(existing.startX) || 0;
-      const startY = Number(existing.startY) || 0;
-      const dx = player.x - startX;
-      const dy = player.y - startY;
-      const distance = Math.hypot(dx, dy);
-      if(distance <= entryRange){
-        return beginRunicPassageTravel(existing);
-      }
-      setHudMessage(`${abilityName} is already etched. Step near the start to traverse it.`);
-      return false;
-    }
-    if(player.casting){
-      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
-      return false;
-    }
-    const maxRange = Math.max(0, Number(abilityFieldValue(ability, 'maxRangePx')) || 0);
-    const width = Math.max(4, Number(abilityFieldValue(ability, 'widthPx')) || 60);
-    const entryRange = Math.max(0, Number(abilityFieldValue(ability, 'entryRangePx')) || 120);
-    const duration = Math.max(0, Number(abilityFieldValue(ability, 'durationMs')) || 0) / 1000;
-    const speedBonusPct = Math.max(0, Number(abilityFieldValue(ability, 'speedBonusPct')) || 0);
-    const travelSpeedRaw = Math.max(0, Number(abilityFieldValue(ability, 'travelSpeedPxS')) || 0);
-    if(!(maxRange > 0)){
-      setHudMessage(`${abilityName} needs a terrain range configured.`);
-      return false;
-    }
-
-    const origin = getSpellOrigin(player);
-    const aimPoint = beamAimPoint();
-    let dx = aimPoint.x - origin.x;
-    let dy = aimPoint.y - origin.y;
-    let len = Math.hypot(dx, dy);
-    if(!(len > 0.0001)){
-      dx = 1;
-      dy = 0;
-      len = 1;
-    }
-    const dirX = dx / len;
-    const dirY = dy / len;
-    const probeRadius = Math.max(6, width * 0.5 + 4);
-    const anchor = findSkyhookAnchor(origin.x, origin.y, dirX, dirY, maxRange, probeRadius);
-    if(!anchor || anchor.hitType !== 'terrain'){
-      setHudMessage(`${abilityName} needs a solid stretch of terrain to carve into.`);
-      return false;
-    }
-    const passageDistance = Math.hypot(anchor.x - origin.x, anchor.y - origin.y);
-    if(!(passageDistance > entryRange + 12)){
-      setHudMessage(`${abilityName} needs more separation from the rock face.`);
-      return false;
-    }
-    const baseSpeed = Math.max(1, Number(player.speed) || 1);
-    const travelSpeed = Math.max(travelSpeedRaw, baseSpeed * (1 + speedBonusPct / 100), 200);
-    if(!(travelSpeed > 0)){
-      setHudMessage(`${abilityName} lacks a travel speed.`);
-      return false;
-    }
-    const travelDuration = Math.max(0.1, passageDistance / travelSpeed);
-    const passage = {
-      id: `runic-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 6)}`,
-      abilityId: ability.id,
-      abilityName,
-      slotIndex,
-      casterRef: player,
-      startX: origin.x,
-      startY: origin.y,
-      endX: anchor.x,
-      endY: anchor.y,
-      width,
-      entryRange,
-      duration,
-      elapsed: 0,
-      travelSpeed,
-      travelDuration,
-      travelElapsed: 0,
-      dx: anchor.x - origin.x,
-      dy: anchor.y - origin.y,
-      state: 'open',
-      cooldownSeconds: abilityCooldownSeconds(ability)
-    };
-    runicPassages.push(passage);
-    cancelPlayerAttack(false);
-    player.chaseTarget = null;
-    player.navGoal = null;
-    player.nav = null;
-    flash(passage.startX, passage.startY, { startRadius: 16, endRadius: 44, color: '#b6fdfc' });
-    setHudMessage(`${abilityName} etches a shimmering corridor through the stone.`);
-    return { success: true, deferCooldown: true };
-  }
-
   function ricochetBounceScale(bomb, bounceIndex){
     if(!bomb) return 0;
     if(bounceIndex === 0){
@@ -18276,8 +17661,9 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
 
     cancelPlayerAttack(false);
     player.chaseTarget = null;
-    player.target.x = targetX;
-    player.target.y = targetY;
+    // Keep position fixed; Dirge Bloom should not move the caster.
+    player.target.x = player.x;
+    player.target.y = player.y;
     player.navGoal = null;
     player.nav = null;
 
@@ -19359,55 +18745,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return current;
   }
 
-  function updatePlasmaPursuitDashes(dt){
-    for(let i = plasmaPursuitDashes.length - 1; i >= 0; i--){
-      const dash = plasmaPursuitDashes[i];
-      if(!dash){
-        plasmaPursuitDashes.splice(i, 1);
-        continue;
-      }
-      const caster = dash.casterRef || player;
-      if(!caster || Number(caster.hp) <= 0){
-        completePlasmaPursuitDash(dash);
-        plasmaPursuitDashes.splice(i, 1);
-        continue;
-      }
-      const destX = Number.isFinite(dash.destX) ? dash.destX : caster.x;
-      const destY = Number.isFinite(dash.destY) ? dash.destY : caster.y;
-      const dx = destX - caster.x;
-      const dy = destY - caster.y;
-      const distance = Math.hypot(dx, dy);
-      const speed = Math.max(0, Number(dash.dashSpeed) || 0);
-      if(!(distance > 0.0001) || !(speed > 0)){
-        completePlasmaPursuitDash(dash);
-        plasmaPursuitDashes.splice(i, 1);
-        continue;
-      }
-      const travel = Math.min(distance, speed * dt);
-      const moveX = dx / distance * travel;
-      const moveY = dy / distance * travel;
-      const moved = moveCircleWithCollision(caster.x, caster.y, moveX, moveY, caster.r || player.r);
-      const actualTravel = Math.hypot(moved.x - caster.x, moved.y - caster.y);
-      caster.x = Math.max(caster.r, Math.min(mapState.width - caster.r, moved.x));
-      caster.y = Math.max(caster.r, Math.min(mapState.height - caster.r, moved.y));
-      caster.target.x = caster.x;
-      caster.target.y = caster.y;
-      caster.navGoal = null;
-      caster.nav = null;
-      caster.chaseTarget = null;
-      dash.traveled = Math.max(0, Number(dash.traveled) || 0) + actualTravel;
-      if(actualTravel <= 0 && distance > 0){
-        completePlasmaPursuitDash(dash);
-        plasmaPursuitDashes.splice(i, 1);
-        continue;
-      }
-      if(distance <= travel + 0.5){
-        completePlasmaPursuitDash(dash);
-        plasmaPursuitDashes.splice(i, 1);
-      }
-    }
-  }
-
   function applyTrailblazePatchDamage(patch){
     if(!patch) return 0;
     const damage = Math.max(0, Number(patch.damagePerTick) || 0);
@@ -19612,32 +18949,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(x, y, inner, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
-
-  function drawWeepingAuras(){
-    if(!weepingAuras.length) return;
-    for(const aura of weepingAuras){
-      if(!aura || aura.ended) continue;
-      const caster = aura.casterRef || player;
-      if(!caster) continue;
-      const radius = Math.max(0, Number(aura.radius) || 0);
-      if(!(radius > 0) || !circleInCamera(caster.x, caster.y, radius + 18)) continue;
-      const pulse = Math.max(0, Math.min(1, Number(aura.pulseTimer) || 0));
-      const active = !(aura.startupTimer > 0);
-      ctx.save();
-      ctx.globalAlpha = active ? 0.28 + 0.12 * pulse : 0.16;
-      ctx.fillStyle = '#0f1f2c';
-      ctx.beginPath();
-      ctx.arc(caster.x, caster.y, radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.setLineDash(active ? [10, 10] : [6, 12]);
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = active ? '#7fe3ff' : '#9ad7ff88';
-      ctx.beginPath();
-      ctx.arc(caster.x, caster.y, radius, 0, Math.PI * 2);
       ctx.stroke();
       ctx.restore();
     }
@@ -19919,29 +19230,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return placements;
   }
 
-  function updateFlareguardHasteBuffs(dt){
-    let activeMult = 1;
-    for(let i = flareguardHasteBuffs.length - 1; i >= 0; i--){
-      const buff = flareguardHasteBuffs[i];
-      if(!buff){
-        flareguardHasteBuffs.splice(i, 1);
-        continue;
-      }
-      buff.age = Math.max(0, (Number(buff.age) || 0) + dt);
-      const duration = Math.max(0, Number(buff.duration) || 0);
-      const progress = duration > 0 ? Math.min(1, buff.age / duration) : 1;
-      const start = Number.isFinite(buff.startMult) ? Math.max(0, buff.startMult) : 1;
-      const end = Number.isFinite(buff.endMult) ? Math.max(0, buff.endMult) : start;
-      buff.currentMult = start + (end - start) * progress;
-      activeMult = Math.max(activeMult, buff.currentMult || 1);
-      if(duration > 0 && buff.age >= duration){
-        flareguardHasteBuffs.splice(i, 1);
-      }
-    }
-    flareguardMoveMultiplier = activeMult;
-    return activeMult;
-  }
-
   function updateQuiverstormBuffs(dt){
     if(!quiverstormBuffs.length) return;
     for(let i = quiverstormBuffs.length - 1; i >= 0; i--){
@@ -20104,6 +19392,105 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       buff.remaining = remaining;
       if(remaining <= 0 || Number(buff.chargesRemaining) <= 0){
         royalOnslaughtBuffs.splice(i, 1);
+      }
+    }
+  }
+
+  function resolveSpinningAxeLanding(flight){
+    const originX = Number.isFinite(flight.originX) ? flight.originX : player.x;
+    const originY = Number.isFinite(flight.originY) ? flight.originY : player.y;
+    const vx = Number(flight.velocityX) || 0;
+    const vy = Number(flight.velocityY) || 0;
+    const speed = Math.hypot(vx, vy);
+    const moving = speed > Math.max(0, Number(flight.moveSpeedThreshold) || 0);
+    const randRange = (min, max) => {
+      const lo = Math.min(min, max);
+      const hi = Math.max(min, max);
+      const span = Math.max(0, hi - lo);
+      return lo + Math.random() * (span || 0);
+    };
+    const clampToBounds = (value, min, max, margin) => {
+      const innerMin = min + margin;
+      const innerMax = max - margin;
+      return Math.max(innerMin, Math.min(innerMax, value));
+    };
+
+    let lx = originX;
+    let ly = originY;
+    if(moving){
+      const nx = vx / speed;
+      const ny = vy / speed;
+      const forwardDist = randRange(flight.forwardMin, flight.forwardMax);
+      const perpX = -ny;
+      const perpY = nx;
+      const sideOffset = randRange(-flight.sideJitterMax, flight.sideJitterMax);
+      lx = originX + nx * forwardDist + perpX * sideOffset;
+      ly = originY + ny * forwardDist + perpY * sideOffset;
+    } else {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = randRange(flight.stillMin, flight.stillMax);
+      lx = originX + Math.cos(angle) * dist;
+      ly = originY + Math.sin(angle) * dist;
+    }
+
+    const margin = Math.max(0, Number(flight.edgeMargin) || 0);
+    const minX = 0;
+    const minY = 0;
+    const maxX = Math.max(minionRadius * 2, mapState.width);
+    const maxY = Math.max(minionRadius * 2, mapState.height);
+    lx = clampToBounds(lx, minX, maxX, margin);
+    ly = clampToBounds(ly, minY, maxY, margin);
+    return { x: lx, y: ly };
+  }
+
+  function updateSpinningAxeFlights(dt){
+    if(!spinningAxeFlights.length) return;
+    for(let i = spinningAxeFlights.length - 1; i >= 0; i--){
+      const flight = spinningAxeFlights[i];
+      if(!flight){
+        spinningAxeFlights.splice(i, 1);
+        continue;
+      }
+      const remaining = Math.max(0, (Number(flight.remaining) || 0) - dt);
+      flight.remaining = remaining;
+      if(remaining > 0){
+        continue;
+      }
+      const landing = resolveSpinningAxeLanding(flight);
+      const marker = {
+        ...flight,
+        state: 'LANDED',
+        x: landing.x,
+        y: landing.y,
+        remaining: Math.max(0, Number(flight.catchWindow) || 0)
+      };
+      spinningAxeMarkers.push(marker);
+      spinningAxeFlights.splice(i, 1);
+    }
+  }
+
+  function updateSpinningAxeMarkers(dt){
+    if(!spinningAxeMarkers.length) return;
+    for(let i = spinningAxeMarkers.length - 1; i >= 0; i--){
+      const marker = spinningAxeMarkers[i];
+      if(!marker){
+        spinningAxeMarkers.splice(i, 1);
+        continue;
+      }
+      const radius = Math.max(0, Number(marker.catchRadius) || 0);
+      const dx = player.x - marker.x;
+      const dy = player.y - marker.y;
+      if(dx * dx + dy * dy <= radius * radius){
+        const caught = addSpinningAxeInHand(marker);
+        if(!caught && marker.abilityName){
+          setHudMessage(`${marker.abilityName} dropped (at max).`);
+        }
+        spinningAxeMarkers.splice(i, 1);
+        continue;
+      }
+      marker.remaining = Math.max(0, (Number(marker.remaining) || 0) - dt);
+      if(marker.remaining <= 0){
+        spinningAxeMarkers.splice(i, 1);
       }
     }
   }
@@ -21103,155 +20490,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.restore();
-    }
-  }
-
-  function findActiveWeepingAura(caster){
-    if(!caster) return null;
-    for(const aura of weepingAuras){
-      if(!aura || aura.ended) continue;
-      if(aura.casterRef === caster) return aura;
-    }
-    return null;
-  }
-
-  function endWeepingAura(aura, { reason = 'end', applyCooldown = false, cooldownSeconds = 0, silent = false } = {}){
-    if(!aura) return false;
-    aura.ended = true;
-    if(applyCooldown && Number.isFinite(aura.slotIndex)){
-      setAbilitySlotCooldown(aura.slotIndex, Math.max(0, Number(cooldownSeconds) || 0));
-    }
-    const idx = weepingAuras.indexOf(aura);
-    if(idx !== -1){
-      weepingAuras.splice(idx, 1);
-    }
-    if(!silent && aura.casterRef === player){
-      const abilityName = aura.abilityName || 'Weeping Aura';
-      let message = `${abilityName} ended.`;
-      if(reason === 'toggleOff'){
-        message = `${abilityName} toggled off.`;
-      } else if(reason === 'dead'){
-        message = `${abilityName} faded.`;
-      }
-      setHudMessage(message);
-    }
-    return true;
-  }
-
-  function castWeepingAuraAbility(slotIndex, ability){
-    const abilityName = ability && (ability.shortName || ability.name)
-      ? (ability.shortName || ability.name)
-      : 'Weeping Aura';
-    const cooldownSeconds = abilityCooldownSeconds(ability);
-    const existing = findActiveWeepingAura(player);
-    if(existing){
-      endWeepingAura(existing, { reason: 'toggleOff', applyCooldown: true, cooldownSeconds });
-      flash(player.x, player.y, { startRadius: Math.max(12, player.r + 8), endRadius: Math.max(28, player.r + 22), color: '#4d7ca0' });
-      return { success: true, deferCooldown: true };
-    }
-    if(player.casting){
-      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
-      return false;
-    }
-    const radius = Math.max(0, Number(abilityFieldValue(ability, 'radiusPx')) || 0);
-    const damage = Math.max(0, Number(abilityFieldValue(ability, 'tickDamage')) || 0);
-    const tickInterval = Math.max(0.05, Number(abilityFieldValue(ability, 'tickIntervalMs')) || 0) / 1000;
-    const startupDelay = Math.max(0, Number(abilityFieldValue(ability, 'startupDelayMs')) || 0) / 1000;
-
-    if(!(radius > 0)){
-      setHudMessage(`${abilityName} needs a radius configured.`);
-      return false;
-    }
-    if(!(damage > 0)){
-      setHudMessage(`${abilityName} needs damage configured.`);
-      return false;
-    }
-
-    const aura = {
-      abilityId: ability && ability.id ? ability.id : 'weeping_aura',
-      abilityName,
-      slotIndex,
-      casterRef: player,
-      radius,
-      damage,
-      tickInterval,
-      tickTimer: startupDelay > 0 ? tickInterval : 0,
-      startupTimer: startupDelay,
-      pulseTimer: 0,
-      age: 0,
-      cooldownSeconds,
-      ended: false
-    };
-    weepingAuras.push(aura);
-    const flashStart = Math.max(10, Math.min(radius * 0.35, 60));
-    const flashEnd = Math.max(radius + 28, flashStart + 36);
-    flash(player.x, player.y, { startRadius: flashStart, endRadius: flashEnd, color: '#7fe3ff' });
-    const message = startupDelay > 0
-      ? `${abilityName} welling up...`
-      : `${abilityName} swirling. Press again to stop.`;
-    setHudMessage(message);
-    return { success: true, deferCooldown: true };
-  }
-
-  function applyWeepingAuraTick(aura, caster){
-    if(!aura || !caster) return 0;
-    const centerX = Number.isFinite(caster.x) ? caster.x : player.x;
-    const centerY = Number.isFinite(caster.y) ? caster.y : player.y;
-    const radius = Math.max(0, Number(aura.radius) || 0);
-    const damage = Math.max(0, Number(aura.damage) || 0);
-    if(!(radius > 0) || !(damage > 0)) return 0;
-    let hits = 0;
-    for(const m of minions){
-      if(!m) continue;
-      const practiceTarget = m.isPracticeDummy === true;
-      if(!practiceTarget && !isEnemyMinionForPlayer(m)) continue;
-      if(m.hp <= 0 || m.portalizing > 0) continue;
-      const targetRadius = practiceTarget ? Math.max(minionRadius, Number(m.radius) || minionRadius) : minionRadius;
-      const maxRadius = radius + targetRadius;
-      const dx = m.x - centerX;
-      const dy = m.y - centerY;
-      if(dx * dx + dy * dy > maxRadius * maxRadius) continue;
-      const prevHp = Number(m.hp) || 0;
-      m.hp = Math.max(0, prevHp - damage);
-      spawnHitSplat(m.x, m.y - targetRadius, damage);
-      handlePracticeDummyDamage(m, prevHp);
-      hits++;
-    }
-    return hits;
-  }
-
-  function updateWeepingAuras(dt){
-    for(let i = weepingAuras.length - 1; i >= 0; i--){
-      const aura = weepingAuras[i];
-      if(!aura){
-        weepingAuras.splice(i, 1);
-        continue;
-      }
-      const caster = aura.casterRef || player;
-      if(!caster || Number(caster.hp) <= 0){
-        endWeepingAura(aura, { reason: 'dead', applyCooldown: false, silent: caster !== player });
-        continue;
-      }
-      aura.age = Math.max(0, (Number(aura.age) || 0) + dt);
-      aura.pulseTimer = Math.max(0, (Number(aura.pulseTimer) || 0) - dt);
-      const interval = Math.max(0.05, Number(aura.tickInterval) || 0.5);
-      aura.tickInterval = interval;
-      if(aura.startupTimer > 0){
-        aura.startupTimer = Math.max(0, Number(aura.startupTimer) - dt);
-        if(aura.startupTimer <= 0){
-          aura.tickTimer = Math.min(aura.tickTimer, 0);
-          aura.pulseTimer = Math.max(aura.pulseTimer, 0.2);
-        }
-        continue;
-      }
-      let tickTimer = (Number(aura.tickTimer) || interval) - dt;
-      while(tickTimer <= 0){
-        applyWeepingAuraTick(aura, caster);
-        aura.pulseTimer = Math.max(aura.pulseTimer, 0.22);
-        tickTimer += interval;
-        if(tickTimer <= 0) tickTimer += interval;
-      }
-      aura.tickTimer = tickTimer;
     }
   }
 
@@ -22287,24 +21525,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return registerTemporaryVisionSource(entry, duration, skyScoutVisionSources);
   }
 
-  function spawnScoutflareVisionSource(x, y, radius, duration){
-    if(!(radius > 0) || !(duration > 0)) return null;
-    const entry = createTemporaryVisionEntry(x, y, radius);
-    return registerTemporaryVisionSource(entry, duration, scoutflareVisionSources);
-  }
-
-  function registerScoutflareChampionReveal(target, radius, duration){
-    if(!target || !(radius > 0) || !(duration > 0)) return null;
-    if(!Number.isFinite(target.x) || !Number.isFinite(target.y)) return null;
-    const entry = createTemporaryVisionEntry(target.x, target.y, radius);
-    if(!entry) return null;
-    ensureVisionConsistency(entry);
-    customVisionSources.push(entry);
-    const record = { entry, lifetime: duration, target };
-    scoutflareRevealRecords.push(record);
-    return record;
-  }
-
   function applyPlasmaStacks(target, stacks, duration){
     if(!target || !(stacks > 0)) return 0;
     const stacksToAdd = Math.max(0, Math.floor(Number(stacks) || 0));
@@ -22386,6 +21606,28 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
   }
 
+  function updateTrapVisionSources(dt){
+    if(!trapVisionSources.length) return;
+    for(let i = trapVisionSources.length - 1; i >= 0; i--){
+      const record = trapVisionSources[i];
+      if(!record || !record.entry){
+        trapVisionSources.splice(i, 1);
+        continue;
+      }
+      record.lifetime = Math.max(0, (Number(record.lifetime) || 0) - dt);
+      if(record.lifetime <= 0){
+        removeTemporaryVisionSource(record.entry);
+        trapVisionSources.splice(i, 1);
+      }
+    }
+  }
+
+  function spawnScoutflareVisionSource(x, y, radius, duration){
+    if(!(radius > 0) || !(duration > 0)) return null;
+    const entry = createTemporaryVisionEntry(x, y, radius);
+    return registerTemporaryVisionSource(entry, duration, scoutflareVisionSources);
+  }
+
   function updateScoutflareVisionSources(dt){
     if(!scoutflareVisionSources.length) return;
     for(let i = scoutflareVisionSources.length - 1; i >= 0; i--){
@@ -22402,39 +21644,50 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
   }
 
+  function registerScoutflareChampionReveal(target, radius, duration){
+    if(!target || !(radius > 0) || !(duration > 0)) return null;
+    const entry = createTemporaryVisionEntry(Number(target.x) || 0, Number(target.y) || 0, radius);
+    if(!entry) return null;
+    const existing = scoutflareRevealRecords.find(record => record && record.target === target);
+    if(existing){
+      existing.remaining = Math.max(Number(existing.remaining) || 0, duration);
+      existing.radius = Math.max(Number(existing.radius) || 0, radius);
+      if(existing.entry){
+        existing.entry.radius = Math.max(Number(existing.entry.radius) || 0, radius);
+        if(!customVisionSources.includes(existing.entry)){
+          customVisionSources.push(existing.entry);
+        }
+      }
+      return existing;
+    }
+    ensureVisionConsistency(entry);
+    customVisionSources.push(entry);
+    const record = { target, entry, radius, remaining: duration };
+    scoutflareRevealRecords.push(record);
+    return record;
+  }
+
   function updateScoutflareRevealRecords(dt){
     if(!scoutflareRevealRecords.length) return;
     for(let i = scoutflareRevealRecords.length - 1; i >= 0; i--){
       const record = scoutflareRevealRecords[i];
-      if(!record || !record.entry){
+      const target = record && record.target;
+      const entry = record && record.entry;
+      if(!record || !target || !entry){
+        if(entry){
+          removeTemporaryVisionSource(entry);
+        }
         scoutflareRevealRecords.splice(i, 1);
         continue;
       }
-      const target = record.target;
-      if(target && Number.isFinite(target.x) && Number.isFinite(target.y)){
-        record.entry.x = target.x;
-        record.entry.y = target.y;
-      }
-      record.lifetime = Math.max(0, (Number(record.lifetime) || 0) - dt);
-      if(record.lifetime <= 0 || !target || (typeof target.hp === 'number' && target.hp <= 0)){
-        removeTemporaryVisionSource(record.entry);
+      entry.x = Number.isFinite(target.x) ? target.x : entry.x;
+      entry.y = Number.isFinite(target.y) ? target.y : entry.y;
+      entry.radius = Math.max(0, Number(record.radius) || 0);
+      ensureVisionConsistency(entry);
+      record.remaining = Math.max(0, (Number(record.remaining) || 0) - dt);
+      if(record.remaining <= 0){
+        removeTemporaryVisionSource(entry);
         scoutflareRevealRecords.splice(i, 1);
-      }
-    }
-  }
-
-  function updateTrapVisionSources(dt){
-    if(!trapVisionSources.length) return;
-    for(let i = trapVisionSources.length - 1; i >= 0; i--){
-      const record = trapVisionSources[i];
-      if(!record || !record.entry){
-        trapVisionSources.splice(i, 1);
-        continue;
-      }
-      record.lifetime = Math.max(0, (Number(record.lifetime) || 0) - dt);
-      if(record.lifetime <= 0){
-        removeTemporaryVisionSource(record.entry);
-        trapVisionSources.splice(i, 1);
       }
     }
   }
@@ -24047,59 +23300,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
   }
 
-  function castFlareguardSurgeAbility(slotIndex, ability){
-    if(player.casting){
-      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
-      return false;
-    }
-
-    const abilityName = ability && (ability.shortName || ability.name) ? (ability.shortName || ability.name) : 'Flareguard Surge';
-    const cooldownSeconds = abilityCooldownSeconds(ability);
-    const shieldAmount = Math.max(0, Number(abilityFieldValue(ability, 'shieldAmount')) || 0);
-    const shieldDuration = Math.max(0, Number(abilityFieldValue(ability, 'shieldDurationMs')) || 0) / 1000;
-    const retaliationDamage = Math.max(0, Number(abilityFieldValue(ability, 'retaliationDamage')) || 0);
-    const moveSpeedStart = 1 + Math.max(0, Number(abilityFieldValue(ability, 'moveSpeedStartPct')) || 0) / 100;
-    const moveSpeedEnd = 1 + Math.max(0, Number(abilityFieldValue(ability, 'moveSpeedEndPct')) || 0) / 100;
-    const moveSpeedDuration = Math.max(0, Number(abilityFieldValue(ability, 'moveSpeedDurationMs')) || 0) / 1000;
-
-    if(!(shieldAmount > 0) || !(shieldDuration > 0)){
-      setHudMessage(`${abilityName} needs a shield configured.`);
-      return false;
-    }
-
-    cancelPlayerAttack(false);
-    player.chaseTarget = null;
-    player.target.x = player.x;
-    player.target.y = player.y;
-    player.navGoal = null;
-    player.nav = null;
-
-    const castRef = { slotIndex, abilityId: ability && ability.id, abilityName };
-    applyPlayerShield(shieldAmount, shieldDuration, {
-      source: 'flareguard_surge',
-      castRef,
-      retaliationDamage
-    });
-
-    if(moveSpeedDuration > 0 && (moveSpeedStart > 0 || moveSpeedEnd > 0)){
-      flareguardHasteBuffs.push({
-        duration: moveSpeedDuration,
-        age: 0,
-        startMult: moveSpeedStart,
-        endMult: moveSpeedEnd,
-        currentMult: moveSpeedStart
-      });
-      flareguardMoveMultiplier = Math.max(flareguardMoveMultiplier, moveSpeedStart);
-    }
-
-    if(Number.isFinite(slotIndex)){
-      setAbilitySlotCooldown(slotIndex, cooldownSeconds);
-    }
-    flash(player.x, player.y, { startRadius: Math.max(14, player.r * 1.3), endRadius: Math.max(64, player.r * 2.8), color: '#ffd8a8' });
-    setHudMessage(`${abilityName} is active.`);
-    return true;
-  }
-
   function castBulwarkCrashAbility(slotIndex, ability){
     if(player.casting){
       setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
@@ -24386,190 +23586,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
           updateMonsterHud();
         }
         hits += 1;
-      }
-    }
-
-    return hits;
-  }
-
-  function castBlazingFanAbility(slotIndex, ability){
-    if(player.casting){
-      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
-      return false;
-    }
-
-    const abilityName = ability && (ability.shortName || ability.name) ? (ability.shortName || ability.name) : 'Blazing Fan';
-    const castDuration = Math.max(0, Number(abilityFieldValue(ability, 'castTimeMs')) || 0) / 1000;
-    const range = Math.max(0, Number(abilityFieldValue(ability, 'coneRangePx')) || 0);
-    const width = Math.max(0, Number(abilityFieldValue(ability, 'coneWidthPx')) || 0);
-    const damage = Math.max(0, Number(abilityFieldValue(ability, 'damage')) || 0);
-
-    if(!(range > 0)){
-      setHudMessage(`${abilityName} needs a cone range.`);
-      return false;
-    }
-    if(!(width > 0)){
-      setHudMessage(`${abilityName} needs a cone width.`);
-      return false;
-    }
-    if(!(damage > 0)){
-      setHudMessage(`${abilityName} needs damage configured.`);
-      return false;
-    }
-
-    const origin = getSpellOrigin(player);
-    const aimPoint = beamAimPoint();
-    let dx = aimPoint.x - origin.x;
-    let dy = aimPoint.y - origin.y;
-    let len = Math.hypot(dx, dy);
-    if(!(len > 0.0001)){
-      dx = player.target.x - origin.x;
-      dy = player.target.y - origin.y;
-      len = Math.hypot(dx, dy);
-    }
-    if(!(len > 0.0001)){
-      dx = 1;
-      dy = 0;
-      len = 1;
-    }
-    const dirX = dx / len;
-    const dirY = dy / len;
-
-    const cast = {
-      slotIndex,
-      abilityId: ability && ability.id,
-      abilityName,
-      casterRef: player,
-      startX: origin.x,
-      startY: origin.y,
-      dirX,
-      dirY,
-      range,
-      width,
-      damage,
-      allowMovementWhileCasting: true,
-      castDuration,
-      elapsed: 0
-    };
-
-    cancelPlayerAttack(false);
-    player.chaseTarget = null;
-    player.target.x = player.x;
-    player.target.y = player.y;
-    player.navGoal = null;
-    player.nav = null;
-
-    if(cast.castDuration <= 0){
-      return fireBlazingFanCast(cast);
-    }
-
-    blazingFanCasts.push(cast);
-    player.casting = cast;
-    setHudMessage(`${abilityName} fanning the flames...`);
-    return true;
-  }
-
-  function fireBlazingFanCast(cast){
-    if(!cast) return false;
-    const origin = resolveCastOrigin(cast);
-    let dirX = Number(cast.dirX);
-    let dirY = Number(cast.dirY);
-    let dirLen = Math.hypot(dirX, dirY);
-    if(!(dirLen > 0.0001)){
-      const aimPoint = beamAimPoint();
-      dirX = aimPoint.x - origin.x;
-      dirY = aimPoint.y - origin.y;
-      dirLen = Math.hypot(dirX, dirY);
-      if(!(dirLen > 0.0001)){
-        dirX = 1;
-        dirY = 0;
-        dirLen = 1;
-      }
-    }
-    dirX /= dirLen;
-    dirY /= dirLen;
-
-    const range = Math.max(0, Number(cast.range) || 0);
-    const width = Math.max(0, Number(cast.width) || 0);
-    const damage = Math.max(0, Number(cast.damage) || 0);
-    if(!(range > 0) || !(width > 0)){
-      if(cast.casterRef === player && player.casting === cast){
-        player.casting = null;
-      }
-      setHudMessage(`${cast.abilityName || 'Blazing Fan'} fizzled.`);
-      return false;
-    }
-
-    const hits = applyBlazingFanDamage(origin.x, origin.y, dirX, dirY, range, width, damage);
-    const flashStart = Math.max(10, Math.min(range * 0.25, 26));
-    const flashEnd = Math.max(range * 0.55, flashStart + 22);
-    flash(origin.x, origin.y, { startRadius: flashStart, endRadius: flashEnd, color: '#ffb45a' });
-
-    if(cast.casterRef === player && player.casting === cast){
-      player.casting = null;
-    }
-
-    const abilityName = cast.abilityName || 'Blazing Fan';
-    if(cast.casterRef === player){
-      if(hits > 0){
-        const dmgText = damage > 0 ? ` for ${Math.round(damage)} damage` : '';
-        setHudMessage(`${abilityName} scorched ${hits} target${hits === 1 ? '' : 's'}${dmgText}.`);
-      } else {
-        setHudMessage(`${abilityName} found no targets.`);
-      }
-    }
-
-    return true;
-  }
-
-  function applyBlazingFanDamage(originX, originY, dirX, dirY, range, width, damage){
-    const safeRange = Math.max(0, Number(range) || 0);
-    const safeWidth = Math.max(0, Number(width) || 0);
-    const safeDamage = Math.max(0, Number(damage) || 0);
-    if(!(safeRange > 0) || !(safeWidth > 0) || !(safeDamage > 0)) return 0;
-
-    const halfAngle = Math.atan2(safeWidth * 0.5, safeRange);
-    const cosHalf = Math.cos(halfAngle);
-    let hits = 0;
-
-    for(const m of minions){
-      if(!m) continue;
-      const practiceTarget = m.isPracticeDummy === true;
-      if(!practiceTarget && !isEnemyMinionForPlayer(m)) continue;
-      if(m.hp <= 0 || m.portalizing > 0) continue;
-      const targetRadius = practiceTarget ? Math.max(minionRadius, Number(m.radius) || minionRadius) : minionRadius;
-      const dx = m.x - originX;
-      const dy = m.y - originY;
-      const distSq = dx * dx + dy * dy;
-      const effective = safeRange + targetRadius;
-      if(distSq > effective * effective) continue;
-      const dist = Math.sqrt(distSq);
-      const dot = (dx * dirX + dy * dirY) / (dist || 1);
-      if(dot < cosHalf) continue;
-      const prevHp = Number(m.hp) || 0;
-      m.hp = Math.max(0, prevHp - safeDamage);
-      spawnHitSplat(m.x, m.y - targetRadius, safeDamage);
-      handlePracticeDummyDamage(m, prevHp);
-      hits += 1;
-    }
-
-    const monster = monsterState;
-    if(monster && isMonsterAttackable(monster)){
-      const monsterRadius = Math.max(minionRadius, monsterAttackRadius(monster));
-      const dx = monster.x - originX;
-      const dy = monster.y - originY;
-      const distSq = dx * dx + dy * dy;
-      const effective = safeRange + monsterRadius;
-      if(distSq <= effective * effective){
-        const dist = Math.sqrt(distSq);
-        const dot = (dx * dirX + dy * dirY) / (dist || 1);
-        if(dot >= cosHalf){
-          const prevHp = Math.max(0, Number(monster.hp) || 0);
-          monster.hp = Math.max(0, prevHp - safeDamage);
-          spawnHitSplat(monster.x, monster.y - monsterRadius, safeDamage);
-          updateMonsterHud();
-          hits += 1;
-        }
       }
     }
 
@@ -25433,93 +24449,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return true;
   }
 
-  function castBladeSweepAbility(slotIndex, ability){
-    if(player.casting){
-      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
-      return false;
-    }
-    const abilityName = ability && (ability.shortName || ability.name)
-      ? (ability.shortName || ability.name)
-      : 'Blade Sweep';
-    const castDuration = Math.max(0, Number(abilityFieldValue(ability, 'castTimeMs')) || 0) / 1000;
-    const range = Math.max(0, Number(abilityFieldValue(ability, 'rangePx')) || 0);
-    if(!(range > 0)){
-      setHudMessage(`${abilityName} needs a range configured.`);
-      return false;
-    }
-    const bladeWidth = Math.max(0, Number(abilityFieldValue(ability, 'widthPx')) || 0);
-    if(bladeWidth <= 0){
-      setHudMessage(`${abilityName} needs blade width configured.`);
-      return false;
-    }
-    const bladeCount = Math.max(1, Math.floor(Number(abilityFieldValue(ability, 'bladeCount')) || 0));
-    const spacing = Math.max(0, Number(abilityFieldValue(ability, 'bladeSpacingPx')) || 0);
-    const speed = Math.max(0, Number(abilityFieldValue(ability, 'projectileSpeedPxS')) || 0);
-    if(!(speed > 0)){
-      setHudMessage(`${abilityName} needs a throw speed configured.`);
-      return false;
-    }
-    const damage = Math.max(0, Number(abilityFieldValue(ability, 'damage')) || 0);
-    const slowFraction = Math.max(0, Math.min(1, (Number(abilityFieldValue(ability, 'slowPct')) || 0) / 100));
-    const slowDuration = Math.max(0, Number(abilityFieldValue(ability, 'slowDurationMs')) || 0) / 1000;
-    const knockback = Math.max(0, Number(abilityFieldValue(ability, 'knockbackDistancePx')) || 0);
-    const origin = getSpellOrigin(player);
-    const aimPoint = beamAimPoint();
-    let dx = aimPoint.x - origin.x;
-    let dy = aimPoint.y - origin.y;
-    let distance = Math.hypot(dx, dy);
-    if(!(distance > 0.0001)){
-      dx = player.target.x - origin.x;
-      dy = player.target.y - origin.y;
-      distance = Math.hypot(dx, dy);
-    }
-    if(!(distance > 0.0001)){
-      dx = 1;
-      dy = 0;
-      distance = 1;
-    }
-    const dirX = dx / distance;
-    const dirY = dy / distance;
-    const cast = {
-      slotIndex,
-      abilityId: ability.id,
-      abilityName,
-      casterRef: player,
-      castDuration,
-      elapsed: 0,
-      count: bladeCount,
-      spacing,
-      width: bladeWidth,
-      speed,
-      distance: range,
-      damage,
-      slowFraction,
-      slowDuration,
-      knockbackDistance: knockback,
-      startX: origin.x,
-      startY: origin.y,
-      targetX: aimPoint.x,
-      targetY: aimPoint.y,
-      lockedDirX: dirX,
-      lockedDirY: dirY
-    };
-
-    if(cast.castDuration <= 0){
-      return fireBladeSweepCast(cast);
-    }
-
-    bladeSweepCasts.push(cast);
-    player.casting = cast;
-    cancelPlayerAttack(false);
-    player.chaseTarget = null;
-    player.target.x = player.x;
-    player.target.y = player.y;
-    player.navGoal = null;
-    player.nav = null;
-    setHudMessage(`${abilityName} readying...`);
-    return true;
-  }
-
   function collectAbilityTargets(){
     const targets = [];
     for(const m of minions){
@@ -26097,18 +25026,14 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   }
 
   // Fallback no-ops for removed/disabled abilities to prevent loop errors
-  function updateScoutflareBombCasts(dt){ scoutflareBombCasts.length = 0; }
   function updateConvergingGaleCasts(dt){ convergingGaleCasts.length = 0; }
   function updateConvergingGaleBlasts(dt){ convergingGaleBlasts.length = 0; }
   function updateConvergingGaleTornadoes(dt){ convergingGaleTornadoes.length = 0; }
   function updateDriftingVeilCasts(dt){ driftingVeilCasts.length = 0; }
   function updateDriftingVeils(dt){ driftingVeils.length = 0; }
-  function updateHorizonRocketCasts(dt){ horizonRocketCasts.length = 0; }
   function updateScarecrowStormCasts(dt){ scarecrowStormCasts.length = 0; }
   function updateScarecrowStormZones(dt){ scarecrowStormZones.length = 0; }
   function drawDriftingVeils(){ /* no-op */ }
-  function drawHorizonRocketTelegraphs(){ /* no-op */ }
-  function drawHorizonRocketProjectiles(){ /* no-op */ }
   function drawMoonlitArcCasts(){ /* no-op */ }
   function drawQuakingStrideAuras(){ /* no-op */ }
   function drawScarecrowStormZones(){ /* no-op */ }
@@ -26452,9 +25377,38 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
 
     const startX = player.x;
     const startY = player.y;
-    const aimPoint = beamAimPoint();
-    let dx = aimPoint.x - startX;
-    let dy = aimPoint.y - startY;
+    const maxRange = dashDistance;
+    let target = null;
+    let closestSq = Number.POSITIVE_INFINITY;
+    for(const m of minions){
+      if(!m) continue;
+      const practiceTarget = m.isPracticeDummy === true;
+      if(!practiceTarget && !isEnemyMinionForPlayer(m)) continue;
+      if(m.hp <= 0 || m.portalizing > 0) continue;
+      const dx = m.x - startX;
+      const dy = m.y - startY;
+      const distSq = dx * dx + dy * dy;
+      if(distSq > maxRange * maxRange) continue;
+      if(distSq < closestSq){
+        closestSq = distSq;
+        target = { x: m.x, y: m.y };
+      }
+    }
+    if(isMonsterAttackable(monsterState)){
+      const dx = monsterState.x - startX;
+      const dy = monsterState.y - startY;
+      const distSq = dx * dx + dy * dy;
+      if(distSq <= maxRange * maxRange && distSq < closestSq){
+        closestSq = distSq;
+        target = { x: monsterState.x, y: monsterState.y };
+      }
+    }
+    if(!target){
+      setHudMessage(`${abilityName} needs a target in range.`);
+      return false;
+    }
+    let dx = target.x - startX;
+    let dy = target.y - startY;
     let distance = Math.hypot(dx, dy);
     if(!(distance > 0.0001)){
       dx = 1;
@@ -28397,112 +27351,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return cleared;
   }
 
-  function applyBreakAndBrace(cast){
-    if(!cast) return false;
-    const target = cast.casterRef || player;
-    if(!target) return false;
-    const duration = Math.max(0, Number(cast.duration) || 0);
-    const reduction = Math.max(0, Math.min(0.95, Number(cast.reductionFraction) || 0));
-    cleanseCrowdControl(target);
-    if(duration > 0 && reduction > 0){
-      target.damageReductionTimer = Math.max(Number(target.damageReductionTimer) || 0, duration);
-      const existing = Math.max(0, Math.min(1, Number(target.damageReductionFraction) || 0));
-      target.damageReductionFraction = Math.max(existing, reduction);
-    }
-    if(target === player){
-      setHudMessage(`${cast.abilityName || 'Brace'} active.`);
-      updatePlayerStatusIcons();
-    } else if(target && target.isPracticeDummy){
-      updatePracticeDummyStatusIcons();
-    }
-    const originX = Number(target.x) || 0;
-    const originY = Number(target.y) || 0;
-    const baseRadius = target === player && Number(player.r) ? Math.max(12, player.r + 6) : 14;
-    const endRadius = target === player && Number(player.r) ? Math.max(40, player.r + 30) : 46;
-    flash(originX, originY, { startRadius: baseRadius, endRadius, color: '#f97316' });
-    if(target === player && player.casting === cast){
-      player.casting = null;
-    }
-    return true;
-  }
-
-  function castBreakAndBraceAbility(slotIndex, ability){
-    if(player.casting){
-      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
-      return false;
-    }
-
-    const abilityName = ability && (ability.shortName || ability.name)
-      ? (ability.shortName || ability.name)
-      : 'Break and Brace';
-    const castDuration = Math.max(0, Number(abilityFieldValue(ability, 'castTimeMs')) || 0) / 1000;
-    const reductionPct = abilityFieldValue(ability, 'damageReductionPct');
-    const reductionFraction = Math.max(0, Math.min(1, (Number(reductionPct) || 0) / 100));
-    const duration = Math.max(0, Number(abilityFieldValue(ability, 'damageReductionDurationMs')) || 0) / 1000;
-
-    if(!(duration > 0)){
-      setHudMessage(`${abilityName} needs a duration configured.`);
-      return false;
-    }
-    if(!(reductionFraction > 0)){
-      setHudMessage(`${abilityName} needs a damage reduction percent configured.`);
-      return false;
-    }
-
-    const cast = {
-      slotIndex,
-      abilityId: ability && ability.id ? ability.id : 'break_and_brace',
-      abilityName,
-      casterRef: player,
-      castDuration,
-      elapsed: 0,
-      reductionFraction,
-      duration,
-      allowMovementWhileCasting: true
-    };
-
-    cancelPlayerAttack(false);
-    player.chaseTarget = null;
-    player.target.x = player.x;
-    player.target.y = player.y;
-    player.navGoal = null;
-    player.nav = null;
-
-    if(cast.castDuration <= 0){
-      return applyBreakAndBrace(cast);
-    }
-
-    braceCasts.push(cast);
-    player.casting = cast;
-    setHudMessage(`${abilityName} preparing...`);
-    return true;
-  }
-
-  function updateBreakAndBraceCasts(dt){
-    if(!braceCasts.length) return;
-    for(let i = braceCasts.length - 1; i >= 0; i--){
-      const cast = braceCasts[i];
-      if(!cast){
-        braceCasts.splice(i, 1);
-        continue;
-      }
-      const caster = cast.casterRef || player;
-      if(caster && typeof caster.hp === 'number' && caster.hp <= 0){
-        if(caster === player && player.casting === cast){
-          player.casting = null;
-        }
-        braceCasts.splice(i, 1);
-        continue;
-      }
-      cast.elapsed = Math.max(0, (Number(cast.elapsed) || 0) + dt);
-      const duration = Math.max(0, Number(cast.castDuration) || 0);
-      if(duration <= 0 || cast.elapsed >= duration){
-        applyBreakAndBrace(cast);
-        braceCasts.splice(i, 1);
-      }
-    }
-  }
-
   function castLinkLashAbility(slotIndex, ability){
     if(player.casting){
       setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
@@ -29728,141 +28576,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       evaluate(monsterState);
     }
     return candidate;
-  }
-
-  function completePlasmaPursuitDash(dash){
-    if(!dash){
-      return;
-    }
-    const abilityName = dash.abilityName || 'Plasma Pursuit';
-    refreshPlayerShield(dash.shieldRef, dash.shieldAmount, dash.shieldDuration);
-    player.attackCooldown = 0;
-    player.attackWindup = 0;
-    player.attackTarget = null;
-    player.attackOverride = null;
-    player.chaseTarget = null;
-    player.navGoal = null;
-    player.nav = null;
-    player.target.x = player.x;
-    player.target.y = player.y;
-    flash(player.x, player.y, { startRadius: Math.max(16, player.r * 1.25), endRadius: Math.max(40, player.r * 2.6), color: '#9feebf' });
-    setHudMessage(`${abilityName} shield refreshed.`);
-  }
-
-  function castPlasmaPursuitAbility(slotIndex, ability){
-    if(player.casting){
-      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
-      return false;
-    }
-    const abilityName = ability && (ability.shortName || ability.name)
-      ? (ability.shortName || ability.name)
-      : 'Plasma Pursuit';
-    const cooldownSeconds = abilityCooldownSeconds(ability);
-    const targetRange = Math.max(0, Number(abilityFieldValue(ability, 'targetRangePx')) || 0);
-    const dashDistance = Math.max(0, Number(abilityFieldValue(ability, 'dashDistancePx')) || 0);
-    const approachDistance = Math.max(0, Number(abilityFieldValue(ability, 'approachDistancePx')) || 0);
-    const dashSpeed = Math.max(0, Number(abilityFieldValue(ability, 'dashSpeedPxS')) || 0);
-    const shieldAmount = Math.max(0, Number(abilityFieldValue(ability, 'shieldAmount')) || 0);
-    const shieldDuration = Math.max(0, Number(abilityFieldValue(ability, 'shieldDurationMs')) || 0) / 1000;
-
-    if(plasmaPursuitDashes.some(d => d && d.casterRef === player)){
-      setHudMessage(`${abilityName} is already in motion.`);
-      return false;
-    }
-    if(!(targetRange > 0)){
-      setHudMessage(`${abilityName} needs a target range configured.`);
-      return false;
-    }
-    if(!(dashDistance > 0)){
-      setHudMessage(`${abilityName} needs a dash distance configured.`);
-      return false;
-    }
-    if(!(dashSpeed > 0)){
-      setHudMessage(`${abilityName} needs a dash speed configured.`);
-      return false;
-    }
-    if(!(shieldAmount > 0 && shieldDuration > 0)){
-      setHudMessage(`${abilityName} needs shield values configured.`);
-      return false;
-    }
-
-    const target = findPlasmaTargetInRange(targetRange);
-    if(!target){
-      setHudMessage(`No plasma-marked enemy in range for ${abilityName}.`);
-      return false;
-    }
-
-    const startX = Number(player.x) || 0;
-    const startY = Number(player.y) || 0;
-    let destX = Number(target.x) || startX;
-    let destY = Number(target.y) || startY;
-    const buffer = approachDistance;
-    if(buffer > 0){
-      const offsetX = startX - destX;
-      const offsetY = startY - destY;
-      const offsetDist = Math.hypot(offsetX, offsetY);
-      if(offsetDist > 0.0001){
-        destX += (offsetX / offsetDist) * buffer;
-        destY += (offsetY / offsetDist) * buffer;
-      } else {
-        destX += buffer;
-      }
-    }
-    let dx = destX - startX;
-    let dy = destY - startY;
-    let distance = Math.hypot(dx, dy);
-    if(dashDistance > 0 && distance > dashDistance){
-      const scale = dashDistance / distance;
-      destX = startX + dx * scale;
-      destY = startY + dy * scale;
-      distance = dashDistance;
-    }
-    const radius = Math.max(player.r || 0, 1);
-    if(Number.isFinite(mapState.width)){
-      destX = Math.max(radius, Math.min(mapState.width - radius, destX));
-    }
-    if(Number.isFinite(mapState.height)){
-      destY = Math.max(radius, Math.min(mapState.height - radius, destY));
-    }
-
-    const castRef = { slotIndex, abilityId: ability && ability.id, abilityName };
-    const shieldRef = applyPlayerShield(shieldAmount, shieldDuration, {
-      source: 'plasma_pursuit',
-      castRef
-    });
-
-    const dash = {
-      abilityId: ability && ability.id,
-      abilityName,
-      slotIndex,
-      casterRef: player,
-      cooldownSeconds,
-      destX,
-      destY,
-      dashSpeed,
-      shieldAmount,
-      shieldDuration,
-      shieldRef,
-      startX,
-      startY,
-      targetRef: target,
-      traveled: 0
-    };
-
-    plasmaPursuitDashes.push(dash);
-    cancelPlayerAttack(false);
-    player.chaseTarget = null;
-    player.target.x = player.x;
-    player.target.y = player.y;
-    player.navGoal = null;
-    player.nav = null;
-    enterPlayerCombat('ability');
-    flash(player.x, player.y, { startRadius: Math.max(14, player.r * 1.3), endRadius: Math.max(48, player.r * 2.6), color: '#a4f3ff' });
-    setHudMessage(`${abilityName} streaks toward the plasma target!`);
-    if(Number.isFinite(slotIndex)){
-      setAbilitySlotCooldown(slotIndex, cooldownSeconds);
-    }
-    return true;
   }
 
   function castMourningMarchAbility(slotIndex, ability){
@@ -31360,110 +30073,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     if(cast && cast.casterRef === player && player.casting === cast){
       player.casting = null;
     }
-    return true;
-  }
-
-  function resolveBladeSweepGeometry(cast){
-    if(!cast) return null;
-    const origin = resolveCastOrigin(cast);
-    let dirX = Number(cast.lockedDirX) || 0;
-    let dirY = Number(cast.lockedDirY) || 0;
-    let len = Math.hypot(dirX, dirY);
-    if(!(len > 0.0001)){
-      const targetX = Number.isFinite(cast.targetX) ? cast.targetX : (origin.x + 1);
-      const targetY = Number.isFinite(cast.targetY) ? cast.targetY : origin.y;
-      dirX = targetX - origin.x;
-      dirY = targetY - origin.y;
-      len = Math.hypot(dirX, dirY);
-    }
-    if(!(len > 0.0001)){
-      dirX = 1;
-      dirY = 0;
-      len = 1;
-    }
-    const distance = Math.max(0, Number(cast.distance) || 0);
-    if(!(distance > 0)){
-      return null;
-    }
-    return {
-      startX: origin.x,
-      startY: origin.y,
-      dirX: dirX / len,
-      dirY: dirY / len,
-      distance
-    };
-  }
-
-  function fireBladeSweepCast(cast){
-    if(!cast){
-      return false;
-    }
-    const geom = resolveBladeSweepGeometry(cast);
-    const abilityName = cast && cast.abilityName ? cast.abilityName : 'Blade Sweep';
-    if(!geom){
-      if(cast && cast.casterRef === player && player.casting === cast){
-        player.casting = null;
-      }
-      setHudMessage(`${abilityName} fizzled.`);
-      return false;
-    }
-    const speed = Math.max(0, Number(cast.speed) || 0);
-    const range = geom.distance;
-    const count = Math.max(1, Math.floor(Number(cast.count) || 1));
-    const spacing = Math.max(0, Number(cast.spacing) || 0);
-    const damage = Math.max(0, Number(cast.damage) || 0);
-    if(!(speed > 0) || !(range > 0) || count <= 0){
-      setHudMessage(`${abilityName} fizzled.`);
-      if(cast && cast.casterRef === player && player.casting === cast){
-        player.casting = null;
-      }
-      return false;
-    }
-    const projectileWidth = Math.max(4, Number(cast.width) || 0);
-    const slowFraction = Math.max(0, Number(cast.slowFraction) || 0);
-    const slowDuration = Math.max(0, Number(cast.slowDuration) || 0);
-    const knockbackDistance = Math.max(0, Number(cast.knockbackDistance) || 0);
-    const perpX = -geom.dirY;
-    const perpY = geom.dirX;
-    const halfIndex = (count - 1) * 0.5;
-    let axesSpawned = 0;
-    for(let i = 0; i < count; i++){
-      const offset = spacing * (i - halfIndex);
-      const startX = geom.startX + perpX * offset;
-      const startY = geom.startY + perpY * offset;
-      laserProjectiles.push({
-        startX,
-        startY,
-        dirX: geom.dirX,
-        dirY: geom.dirY,
-        speed,
-        maxDistance: range,
-        traveled: 0,
-        width: projectileWidth,
-        damage,
-        slowFraction,
-        slowDuration,
-        knockbackDistance,
-        casterRef: cast.casterRef,
-        abilityName,
-        currentX: startX,
-        currentY: startY
-      });
-      axesSpawned++;
-    }
-    if(axesSpawned <= 0){
-      setHudMessage(`${abilityName} fizzled.`);
-      if(cast && cast.casterRef === player && player.casting === cast){
-        player.casting = null;
-      }
-      return false;
-    }
-    cancelPlayerAttack(false);
-    flash(geom.startX, geom.startY, { startRadius: 10, endRadius: Math.max(36, spacing * 1.5 + projectileWidth), color: '#f4d07a' });
-    if(cast && cast.casterRef === player && player.casting === cast){
-      player.casting = null;
-    }
-    setHudMessage(`${abilityName} swept!`);
     return true;
   }
 
@@ -33069,286 +31678,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
   }
 
-  function castBeaconOfNightAbility(slotIndex, ability){
-    if(player.casting){
-      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
-      return false;
-    }
-    const abilityName = ability && (ability.shortName || ability.name) ? (ability.shortName || ability.name) : 'Beacon of Night';
-    const range = Math.max(0, Number(abilityFieldValue(ability, 'projectileRangePx')) || 0);
-    if(!(range > 0)){
-      setHudMessage(`${abilityName} needs a range.`);
-      return false;
-    }
-    const speed = Math.max(0, Number(abilityFieldValue(ability, 'projectileSpeedPxS')) || 0);
-    if(!(speed > 0)){
-      setHudMessage(`${abilityName} needs a spotlight speed.`);
-      return false;
-    }
-    const width = Math.max(0, Number(abilityFieldValue(ability, 'beamWidth')) || 0);
-    const impactRadius = Math.max(0, Number(abilityFieldValue(ability, 'impactRadiusPx')) || 0);
-    const damage = Math.max(0, Number(abilityFieldValue(ability, 'damage')) || 0);
-    const followupDamage = Math.max(0, Number(abilityFieldValue(ability, 'followupDamage')) || 0);
-    const followupDelay = Math.max(0, Number(abilityFieldValue(ability, 'followupDelayMs')) || 0) / 1000;
-    const castDuration = Math.max(0, Number(abilityFieldValue(ability, 'castTimeMs')) || 0) / 1000;
-
-    const origin = getSpellOrigin(player);
-    const aimPoint = beamAimPoint();
-    let dx = aimPoint.x - origin.x;
-    let dy = aimPoint.y - origin.y;
-    let distance = Math.hypot(dx, dy);
-    if(!(distance > 0.0001)){
-      dx = player.target.x - origin.x;
-      dy = player.target.y - origin.y;
-      distance = Math.hypot(dx, dy);
-    }
-    if(!(distance > 0.0001)){
-      dx = 1;
-      dy = 0;
-      distance = 1;
-    }
-    const dirX = dx / distance;
-    const dirY = dy / distance;
-
-    const cast = {
-      slotIndex,
-      abilityId: ability.id,
-      abilityName,
-      casterRef: player,
-      startX: origin.x,
-      startY: origin.y,
-      dirX,
-      dirY,
-      range,
-      speed,
-      width,
-      impactRadius,
-      damage,
-      followupDamage,
-      followupDelay,
-      castDuration,
-      elapsed: 0,
-      traveled: 0,
-      state: castDuration > 0 ? 'windup' : 'active'
-    };
-
-    beaconOfNightCasts.push(cast);
-    cancelPlayerAttack(false);
-    player.chaseTarget = null;
-    player.target.x = player.x;
-    player.target.y = player.y;
-    player.navGoal = null;
-    player.nav = null;
-
-    if(cast.state === 'windup'){
-      player.casting = cast;
-      setHudMessage(`${abilityName} channeling moonlight...`);
-      return true;
-    }
-
-    setHudMessage(`${abilityName} shining!`);
-    return true;
-  }
-
-  function applyBeaconOfNightImpact(cast, impactX, impactY){
-    if(!cast) return;
-    const radius = Math.max(0, Number(cast.impactRadius) || 0);
-    const targetRadius = radius + minionRadius;
-    const targetRadiusSq = targetRadius * targetRadius;
-    const victims = [];
-    for(const m of minions){
-      if(!m || !isEnemyMinionForPlayer(m)) continue;
-      if(m.hp <= 0 || m.portalizing > 0) continue;
-      const dx = m.x - impactX;
-      const dy = m.y - impactY;
-      if(dx * dx + dy * dy <= targetRadiusSq){
-        victims.push(m);
-      }
-    }
-    if(!victims.length){
-      flash(impactX, impactY, { startRadius: 12, endRadius: Math.max(32, radius), color: '#8ad4ff' });
-      setHudMessage(`${cast.abilityName || 'Beacon'} touched nothing.`);
-      return;
-    }
-    const damage = Math.max(0, Number(cast.damage) || 0);
-    for(const target of victims){
-      const prevHp = Number(target.hp) || 0;
-      if(damage > 0){
-        target.hp = Math.max(0, prevHp - damage);
-        spawnHitSplat(target.x, target.y - minionRadius, damage);
-      }
-      handlePracticeDummyDamage(target, prevHp);
-    }
-    const delay = Math.max(0, Number(cast.followupDelay) || 0);
-    const followupDamage = Math.max(0, Number(cast.followupDamage) || 0);
-    for(const target of victims){
-      beaconOfNightLocks.push({
-        abilityName: cast.abilityName,
-        casterRef: cast.casterRef,
-        targetRef: target,
-        x: target.x,
-        y: target.y,
-        impactX,
-        impactY,
-        timer: 0,
-        delay,
-        damage: followupDamage
-      });
-    }
-    flash(impactX, impactY, { startRadius: Math.max(12, radius * 0.4), endRadius: Math.max(radius + 40, radius + 80), color: '#c9e3ff' });
-    const message = victims.length === 1
-      ? `${cast.abilityName || 'Beacon'} locked onto a target.`
-      : `${cast.abilityName || 'Beacon'} locked onto ${victims.length} targets.`;
-    setHudMessage(message);
-  }
-
-  function updateBeaconOfNightCasts(dt){
-    for(let i = beaconOfNightCasts.length - 1; i >= 0; i--){
-      const cast = beaconOfNightCasts[i];
-      if(!cast){
-        beaconOfNightCasts.splice(i, 1);
-        continue;
-      }
-      if(cast.state === 'windup'){
-        cast.elapsed = Math.max(0, (Number(cast.elapsed) || 0) + dt);
-        const duration = Math.max(0, Number(cast.castDuration) || 0);
-        if(duration <= 0 || cast.elapsed >= duration){
-          cast.state = 'active';
-          cast.elapsed = duration;
-          cast.traveled = 0;
-          if(cast.casterRef === player && player.casting === cast){
-            player.casting = null;
-          }
-          setHudMessage(`${cast.abilityName || 'Beacon'} shining!`);
-        }
-        continue;
-      }
-      const speed = Math.max(0, Number(cast.speed) || 0);
-      const maxRange = Math.max(0, Number(cast.range) || 0);
-      if(!(speed > 0) || !(maxRange > 0)){
-        beaconOfNightCasts.splice(i, 1);
-        continue;
-      }
-      const prevTraveled = Math.max(0, Number(cast.traveled) || 0);
-      const nextTraveled = prevTraveled + speed * dt;
-      const clampedNext = Math.min(maxRange, nextTraveled);
-      const halfWidth = Math.max(0, Number(cast.width) || 0) * 0.5;
-      const detectRadius = halfWidth + minionRadius;
-      const detectSq = detectRadius * detectRadius;
-      let earliestAlong = Infinity;
-      for(const m of minions){
-        if(!m || !isEnemyMinionForPlayer(m)) continue;
-        if(m.hp <= 0 || m.portalizing > 0) continue;
-        const relX = m.x - cast.startX;
-        const relY = m.y - cast.startY;
-        const along = relX * cast.dirX + relY * cast.dirY;
-        if(along < prevTraveled || along > clampedNext) continue;
-        const closestX = cast.startX + cast.dirX * along;
-        const closestY = cast.startY + cast.dirY * along;
-        const offX = m.x - closestX;
-        const offY = m.y - closestY;
-        if(offX * offX + offY * offY <= detectSq && along < earliestAlong){
-          earliestAlong = along;
-        }
-      }
-      if(earliestAlong < Infinity){
-        const impactX = cast.startX + cast.dirX * earliestAlong;
-        const impactY = cast.startY + cast.dirY * earliestAlong;
-        applyBeaconOfNightImpact(cast, impactX, impactY);
-        beaconOfNightCasts.splice(i, 1);
-        continue;
-      }
-      if(clampedNext >= maxRange - 0.001){
-        beaconOfNightCasts.splice(i, 1);
-        setHudMessage(`${cast.abilityName || 'Beacon'} faded before locking on.`);
-        continue;
-      }
-      cast.traveled = clampedNext;
-    }
-  }
-
-  function updateBeaconOfNightLocks(dt){
-    for(let i = beaconOfNightLocks.length - 1; i >= 0; i--){
-      const lock = beaconOfNightLocks[i];
-      if(!lock){
-        beaconOfNightLocks.splice(i, 1);
-        continue;
-      }
-      lock.timer = Math.max(0, (Number(lock.timer) || 0) + dt);
-      const target = lock.targetRef;
-      if(target && target.hp > 0){
-        lock.x = target.x;
-        lock.y = target.y;
-      }
-      const delay = Math.max(0, Number(lock.delay) || 0);
-      if(lock.timer >= delay){
-        const damage = Math.max(0, Number(lock.damage) || 0);
-        if(target && damage > 0){
-          const prevHp = Number(target.hp) || 0;
-          target.hp = Math.max(0, prevHp - damage);
-          spawnHitSplat(target.x, target.y - minionRadius, damage);
-          handlePracticeDummyDamage(target, prevHp);
-        }
-        const sparkX = Number(lock.x) || Number(lock.impactX) || 0;
-        const sparkY = Number(lock.y) || Number(lock.impactY) || 0;
-        flash(sparkX, sparkY, { startRadius: 10, endRadius: 36, color: '#ffd6ff' });
-        beaconOfNightLocks.splice(i, 1);
-      }
-    }
-  }
-
-  function drawBeaconOfNightSpotlights(){
-    if(!beaconOfNightCasts.length) return;
-    for(const cast of beaconOfNightCasts){
-      if(!cast || cast.state !== 'active') continue;
-      const traveled = Math.max(0, Number(cast.traveled) || 0);
-      if(traveled <= 0) continue;
-      const startX = Number(cast.startX) || 0;
-      const startY = Number(cast.startY) || 0;
-      const endX = startX + (Number(cast.dirX) || 0) * traveled;
-      const endY = startY + (Number(cast.dirY) || 0) * traveled;
-      const width = Math.max(4, Number(cast.width) || 0);
-      if(!circleInCamera((startX + endX) * 0.5, (startY + endY) * 0.5, traveled + width)) continue;
-      ctx.save();
-      ctx.lineWidth = width;
-      ctx.strokeStyle = '#99d9ff';
-      ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.lineTo(endX, endY);
-      ctx.stroke();
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.fillStyle = '#fef9ff';
-      ctx.beginPath();
-      ctx.arc(endX, endY, Math.max(8, width * 0.5), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-
-  function drawBeaconOfNightLocks(){
-    if(!beaconOfNightLocks.length) return;
-    for(const lock of beaconOfNightLocks){
-      if(!lock) continue;
-      const x = Number(lock.x) || Number(lock.impactX) || 0;
-      const y = Number(lock.y) || Number(lock.impactY) || 0;
-      if(!circleInCamera(x, y, 32)) continue;
-      const progress = lock.delay > 0 ? Math.min(1, (Number(lock.timer) || 0) / lock.delay) : 1;
-      ctx.save();
-      ctx.globalAlpha = 0.2 + 0.6 * (1 - progress);
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2 + (1 - progress) * 4;
-      ctx.beginPath();
-      ctx.arc(x, y, 18 + progress * 12, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 0.6;
-      ctx.fillStyle = '#b6e7ff';
-      ctx.beginPath();
-      ctx.arc(x, y, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-
   function updateBulwarkCrashCasts(dt){
     for(let i = bulwarkCrashCasts.length - 1; i >= 0; i--){
       const cast = bulwarkCrashCasts[i];
@@ -33434,37 +31763,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       if(duration <= 0 || cast.elapsed >= duration){
         ragePulseCasts.splice(i, 1);
         fireRagePulseCast(cast);
-      }
-    }
-  }
-
-  function updateBlazingFanCasts(dt){
-    for(let i = blazingFanCasts.length - 1; i >= 0; i--){
-      const cast = blazingFanCasts[i];
-      if(!cast){
-        blazingFanCasts.splice(i, 1);
-        continue;
-      }
-      const caster = cast.casterRef || player;
-      const interrupted = caster && (caster.stunTimer > 0 || caster.knockupTimer > 0 || caster.silenceTimer > 0 || caster.polymorphTimer > 0);
-      if(interrupted){
-        if(caster === player && player.casting === cast){
-          player.casting = null;
-          setHudMessage(`${cast.abilityName || 'Spell'} interrupted.`);
-        }
-        blazingFanCasts.splice(i, 1);
-        continue;
-      }
-      if(caster){
-        const casterOrigin = getSpellOrigin(caster);
-        if(Number.isFinite(casterOrigin.x)) cast.startX = casterOrigin.x;
-        if(Number.isFinite(casterOrigin.y)) cast.startY = casterOrigin.y;
-      }
-      cast.elapsed = Math.max(0, (cast.elapsed || 0) + dt);
-      const duration = Math.max(0, Number(cast.castDuration) || 0);
-      if(duration <= 0 || cast.elapsed >= duration){
-        blazingFanCasts.splice(i, 1);
-        fireBlazingFanCast(cast);
       }
     }
   }
@@ -33981,18 +32279,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
   }
 
-  function updateBladeSweepCasts(dt){
-    for(let i = bladeSweepCasts.length - 1; i >= 0; i--){
-      const cast = bladeSweepCasts[i];
-      const duration = Math.max(0, Number(cast.castDuration) || 0);
-      cast.elapsed = Math.max(0, (cast.elapsed || 0) + dt);
-      if(duration <= 0 || cast.elapsed >= duration){
-        bladeSweepCasts.splice(i, 1);
-        fireBladeSweepCast(cast);
-      }
-    }
-  }
-
   function updateDuskwaveCasts(dt){
     for(let i = duskwaveCasts.length - 1; i >= 0; i--){
       const cast = duskwaveCasts[i];
@@ -34436,60 +32722,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
   }
 
-  function updateRazorWhirlCasts(dt){
-    for(let i = razorWhirlCasts.length - 1; i >= 0; i--){
-      const cast = razorWhirlCasts[i];
-      if(!cast){
-        razorWhirlCasts.splice(i, 1);
-        continue;
-      }
-      const caster = cast.casterRef || player;
-      if(!caster || Number(caster.hp) <= 0){
-        finishRazorWhirlCast(cast, { reason: 'dead' });
-        continue;
-      }
-      const interrupted = caster.stunTimer > 0 || caster.knockupTimer > 0 || caster.polymorphTimer > 0 || caster.silenceTimer > 0;
-      if(cast.state === 'windup'){
-        cast.elapsed = Math.max(0, (Number(cast.elapsed) || 0) + dt);
-        const lockout = Math.max(0, Number(cast.lockout) || 0);
-        if(interrupted){
-          finishRazorWhirlCast(cast, { reason: 'interrupted' });
-          continue;
-        }
-        if(cast.elapsed >= lockout){
-          const hits = performRazorWhirlSpin(cast, { followup: false });
-          cast.state = 'followup';
-          cast.followupElapsed = 0;
-          cast.followupRemaining = Math.max(0, Number(cast.followupWindow) || 0);
-          cast.allowMovementWhileCasting = true;
-          cast.movementSpeedMultiplier = 1;
-          if(caster === player && player.casting === cast){
-            player.casting = null;
-          }
-          if(caster === player && cast.followupRemaining > 0){
-            setHudMessage(`${cast.abilityName || 'Razor Whirl'} ${hits > 0 ? `hit ${hits} target${hits === 1 ? '' : 's'}` : 'missed'} - follow-up ready!`);
-          }
-        }
-        continue;
-      }
-      if(cast.state === 'followup'){
-        cast.followupElapsed = Math.max(0, (Number(cast.followupElapsed) || 0) + dt);
-        const window = Math.max(0, Number(cast.followupWindow) || 0);
-        cast.followupRemaining = Math.max(0, window - cast.followupElapsed);
-        if(interrupted){
-          finishRazorWhirlCast(cast, { reason: 'interrupted' });
-          continue;
-        }
-        if(cast.followupRemaining <= 0){
-          finishRazorWhirlCast(cast, { reason: 'expired' });
-          continue;
-        }
-      } else {
-        finishRazorWhirlCast(cast, { reason: 'complete' });
-      }
-    }
-  }
-
   function updateEmberWaltzCasts(dt){
     if(!emberWaltzCasts.length) return;
     const activeCastIds = new Set();
@@ -34681,62 +32913,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
             swing.shotTimer -= interval;
             fireSkyhookShot(swing, { finalShot: false });
           }
-        }
-      }
-    }
-  }
-
-  function updateRunicPassages(dt){
-    if(runicPassages.length === 0) return;
-    for(let i = runicPassages.length - 1; i >= 0; i--){
-      const passage = runicPassages[i];
-      if(!passage){
-        runicPassages.splice(i, 1);
-        continue;
-      }
-      passage.elapsed = Math.max(0, (Number(passage.elapsed) || 0) + dt);
-      if(passage.state === 'open'){
-        const duration = Math.max(0, Number(passage.duration) || 0);
-        if(duration > 0 && passage.elapsed >= duration){
-          const abilityName = passage.abilityName || 'Runic Passage';
-          if(Number.isFinite(passage.slotIndex)){
-            setAbilitySlotCooldown(passage.slotIndex, Math.max(0, Number(passage.cooldownSeconds) || 0));
-          }
-          setHudMessage(`${abilityName} fades before anyone can step through.`);
-          if(passage.casterRef === player && player.casting === passage){
-            player.casting = null;
-          }
-          runicPassages.splice(i, 1);
-          continue;
-        }
-      }
-      if(passage.state === 'traveling'){
-        const duration = Math.max(0, Number(passage.travelDuration) || 0);
-        passage.travelElapsed = Math.min(duration, Math.max(0, (Number(passage.travelElapsed) || 0) + dt));
-        const progress = duration > 0 ? Math.min(1, passage.travelElapsed / duration) : 1;
-        const nextX = Number(passage.startX) + (Number(passage.dx) || 0) * progress;
-        const nextY = Number(passage.startY) + (Number(passage.dy) || 0) * progress;
-        const clampedX = Math.max(player.r, Math.min(mapState.width - player.r, nextX));
-        const clampedY = Math.max(player.r, Math.min(mapState.height - player.r, nextY));
-        passage.currentX = clampedX;
-        passage.currentY = clampedY;
-        if(passage.casterRef === player){
-          player.x = clampedX;
-          player.y = clampedY;
-          player.target.x = clampedX;
-          player.target.y = clampedY;
-          player.navGoal = null;
-          player.nav = null;
-          player.chaseTarget = null;
-        }
-        if(progress >= 1){
-          const abilityName = passage.abilityName || 'Runic Passage';
-          flash(passage.endX, passage.endY, { startRadius: 14, endRadius: 36, color: '#b6fdfc' });
-          setHudMessage(`${abilityName} sweeps you out onto the far side.`);
-          if(passage.casterRef === player && player.casting === passage){
-            player.casting = null;
-          }
-          runicPassages.splice(i, 1);
         }
       }
     }
@@ -35210,183 +33386,66 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
   }
 
-  function castScoutflareBombAbility(slotIndex, ability){
-    if(player.casting){
-      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
-      return false;
-    }
-    const abilityName = ability && (ability.shortName || ability.name)
-      ? (ability.shortName || ability.name)
-      : 'Scoutflare Bomb';
-    const castDuration = Math.max(0, Number(abilityFieldValue(ability, 'castTimeMs')) || 0) / 1000;
-    const maxRange = Math.max(0, Number(abilityFieldValue(ability, 'maxRangePx')) || 0);
-    if(!(maxRange > 0)){
-      setHudMessage(`${abilityName} needs a target range.`);
-      return false;
-    }
-    const projectileSpeed = Math.max(0, Number(abilityFieldValue(ability, 'projectileSpeedPxS')) || 0);
-    if(!(projectileSpeed > 0)){
-      setHudMessage(`${abilityName} needs travel speed configured.`);
-      return false;
-    }
-    const impactRadius = Math.max(0, Number(abilityFieldValue(ability, 'aoeRadiusPx')) || 0);
-    const damage = Math.max(0, Number(abilityFieldValue(ability, 'damage')) || 0);
-    const impactVisionRadius = Math.max(0, Number(abilityFieldValue(ability, 'impactVisionRadiusPx')) || 0);
-    const impactVisionDuration = Math.max(0, Number(abilityFieldValue(ability, 'impactVisionDurationMs')) || 0) / 1000;
-    const pathVisionRadius = Math.max(0, Number(abilityFieldValue(ability, 'pathVisionRadiusPx')) || 0);
-    const pathVisionDuration = Math.max(0, Number(abilityFieldValue(ability, 'pathVisionDurationMs')) || 0) / 1000;
-    const pathSpacing = Math.max(0, Number(abilityFieldValue(ability, 'pathVisionSpacingPx')) || 0);
-    const revealRadius = Math.max(0, Number(abilityFieldValue(ability, 'championRevealRadiusPx')) || 0);
-    const revealDuration = Math.max(0, Number(abilityFieldValue(ability, 'championRevealDurationMs')) || 0) / 1000;
-
-    const origin = getSpellOrigin(player);
-    const aimPoint = typeof skillshotAimPoint === 'function' ? skillshotAimPoint() : beamAimPoint();
-    let dx = aimPoint.x - origin.x;
-    let dy = aimPoint.y - origin.y;
-    let distance = Math.hypot(dx, dy);
-    if(!(distance > 0.0001)){
-      dx = player.target.x - origin.x;
-      dy = player.target.y - origin.y;
-      distance = Math.hypot(dx, dy);
-    }
-    if(!(distance > 0.0001)){
-      dx = 1;
-      dy = 0;
-      distance = 1;
-    }
-    if(maxRange > 0 && distance > maxRange){
-      const scale = maxRange / distance;
-      dx *= scale;
-      dy *= scale;
-      distance = maxRange;
-    }
-    let targetX = origin.x + dx;
-    let targetY = origin.y + dy;
-    const clampRadius = Math.max(impactRadius, 0);
-    if(mapState && Number.isFinite(mapState.width) && Number.isFinite(mapState.height)){
-      targetX = Math.max(clampRadius, Math.min(mapState.width - clampRadius, targetX));
-      targetY = Math.max(clampRadius, Math.min(mapState.height - clampRadius, targetY));
-      const clampedDx = targetX - origin.x;
-      const clampedDy = targetY - origin.y;
-      const clampedDist = Math.hypot(clampedDx, clampedDy);
-      if(clampedDist > 0.0001){
-        dx = clampedDx;
-        dy = clampedDy;
-        distance = clampedDist;
+  function updateScoutflareBombCasts(dt){
+    if(!scoutflareBombCasts.length) return;
+    for(let i = scoutflareBombCasts.length - 1; i >= 0; i--){
+      const cast = scoutflareBombCasts[i];
+      if(!cast){
+        scoutflareBombCasts.splice(i, 1);
+        continue;
+      }
+      const remaining = Number.isFinite(cast.fuseRemaining)
+        ? Number(cast.fuseRemaining)
+        : (Number.isFinite(cast.fuseSeconds) ? Number(cast.fuseSeconds) : null);
+      if(remaining !== null){
+        const nextFuse = Math.max(0, remaining - dt);
+        cast.fuseRemaining = nextFuse;
+        if(nextFuse <= 0){
+          detonateScoutflareBomb(cast);
+          scoutflareBombCasts.splice(i, 1);
+          continue;
+        }
       }
     }
-    const dirLen = Math.hypot(dx, dy) || 1;
-    const dirX = dx / dirLen;
-    const dirY = dy / dirLen;
-
-    const cast = {
-      slotIndex,
-      abilityId: ability.id,
-      abilityName,
-      casterRef: player,
-      originX: origin.x,
-      originY: origin.y,
-      targetX,
-      targetY,
-      dirX,
-      dirY,
-      distance,
-      projectileSpeed,
-      impactRadius,
-      damage,
-      impactVisionRadius,
-      impactVisionDuration,
-      pathVisionRadius,
-      pathVisionDuration,
-      pathSpacing,
-      nextPulseDistance: pathSpacing > 0 ? pathSpacing : null,
-      revealRadius,
-      revealDuration,
-      castDuration,
-      castElapsed: 0,
-      traveled: 0,
-      state: castDuration > 0 ? 'windup' : 'flying',
-      projectileX: origin.x,
-      projectileY: origin.y
-    };
-
-    scoutflareBombCasts.push(cast);
-    cancelPlayerAttack(false);
-    player.chaseTarget = null;
-    player.target.x = player.x;
-    player.target.y = player.y;
-    player.navGoal = null;
-    player.nav = null;
-    flash(origin.x, origin.y, { startRadius: 10, endRadius: 26, color: '#ffe69a' });
-
-    if(cast.state === 'windup'){
-      player.casting = cast;
-      setHudMessage(`${abilityName} priming...`);
-    } else {
-      setHudMessage(`${abilityName} launched!`);
-    }
-    return true;
   }
 
-  function applyScoutflareBombDamage(cast, centerX, centerY){
-    if(!cast) return 0;
+  function applyScoutflareBombDamage(cast, impactX, impactY){
+    if(!cast) return;
     const radius = Math.max(0, Number(cast.impactRadius) || 0);
-    const damage = Math.max(0, Number(cast.damage) || 0);
-    const revealRadius = Math.max(0, Number(cast.revealRadius) || 0);
-    const revealDuration = Math.max(0, Number(cast.revealDuration) || 0);
-    if(radius <= 0 || damage <= 0){
-      if(revealRadius > 0 && revealDuration > 0){
-        if(cast.casterRef === player && cast.abilityName){
-          setHudMessage(`${cast.abilityName} landed but did no damage.`);
-        }
-      }
-    }
-    const effectiveRadius = radius + minionRadius;
-    const effectiveSq = effectiveRadius * effectiveRadius;
+    const damage = Math.max(0, Number(cast.impactDamage || cast.damage) || 0);
+    if(!(radius > 0) || !(damage > 0)) return;
+    const radiusSq = (radius + minionRadius) * (radius + minionRadius);
     let hits = 0;
     for(const m of minions){
-      if(!m || !isEnemyMinionForPlayer(m)) continue;
-      if(m.hp <= 0 || m.portalizing > 0) continue;
-      const dx = m.x - centerX;
-      const dy = m.y - centerY;
-      if(dx * dx + dy * dy > effectiveSq) continue;
+      if(!isEnemyMinionForPlayer(m)) continue;
+      const dx = m.x - impactX;
+      const dy = m.y - impactY;
+      if(dx * dx + dy * dy > radiusSq) continue;
       const prevHp = Number(m.hp) || 0;
-      if(damage > 0){
-        m.hp = Math.max(0, prevHp - damage);
-        spawnHitSplat(m.x, m.y - minionRadius, damage);
-      }
-      handlePracticeDummyDamage(m, prevHp);
-      if(revealRadius > 0 && revealDuration > 0){
-        registerScoutflareChampionReveal(m, revealRadius, revealDuration);
-      }
+      if(prevHp <= 0) continue;
+      m.hp = Math.max(0, prevHp - damage);
+      spawnHitSplat(m.x, m.y - minionRadius, damage);
       hits++;
     }
-    if(monsterState && isMonsterAttackable(monsterState)){
-      const monsterRadius = Math.max(minionRadius, monsterAttackRadius(monsterState));
-      const dx = monsterState.x - centerX;
-      const dy = monsterState.y - centerY;
-      const limit = radius + monsterRadius;
-      if(dx * dx + dy * dy <= limit * limit){
-        const prevHp = Math.max(0, Number(monsterState.hp) || 0);
-        if(damage > 0){
+    if(isMonsterAttackable(monsterState)){
+      const monsterRadius = Math.max(minionRadius, monsterAttackRadius());
+      const dx = monsterState.x - impactX;
+      const dy = monsterState.y - impactY;
+      if(dx * dx + dy * dy <= (radius + monsterRadius) * (radius + monsterRadius)){
+        const prevHp = Number(monsterState.hp) || 0;
+        if(prevHp > 0){
           monsterState.hp = Math.max(0, prevHp - damage);
           spawnHitSplat(monsterState.x, monsterState.y - monsterRadius, damage);
+          hits++;
           updateMonsterHud();
         }
-        if(revealRadius > 0 && revealDuration > 0){
-          registerScoutflareChampionReveal(monsterState, revealRadius, revealDuration);
-        }
-        hits++;
       }
     }
-    if(cast.casterRef === player){
-      if(hits > 0){
-        setHudMessage(`${cast.abilityName || 'Scoutflare'} struck ${hits} target${hits === 1 ? '' : 's'}.`);
-      } else {
-        setHudMessage(`${cast.abilityName || 'Scoutflare'} exploded but hit nothing.`);
-      }
+    if(hits > 0 && cast.casterRef === player){
+      const abilityName = cast.abilityName || 'Scoutflare';
+      const plural = hits === 1 ? '' : 's';
+      setHudMessage(`${abilityName} hit ${hits} target${plural}.`);
     }
-    return hits;
   }
 
   function detonateScoutflareBomb(cast){
@@ -35405,6 +33464,42 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     const endRadius = Math.max(radius + 20, radius * 1.4);
     flash(impactX, impactY, { startRadius: Math.max(12, radius * 0.35), endRadius, color: '#ffd27f' });
     applyScoutflareBombDamage(cast, impactX, impactY);
+  }
+
+  function drawScoutflareTelegraphs(){
+    if(!scoutflareBombCasts.length) return;
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#ffd27f66';
+    for(const cast of scoutflareBombCasts){
+      if(!cast) continue;
+      const radius = Math.max(0, Number(cast.impactRadius) || 0);
+      if(!(radius > 0)) continue;
+      const targetX = Number.isFinite(cast.targetX) ? cast.targetX : (Number.isFinite(cast.projectileX) ? cast.projectileX : cast.originX);
+      const targetY = Number.isFinite(cast.targetY) ? cast.targetY : (Number.isFinite(cast.projectileY) ? cast.projectileY : cast.originY);
+      if(!Number.isFinite(targetX) || !Number.isFinite(targetY)) continue;
+      ctx.beginPath();
+      ctx.arc(targetX, targetY, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawScoutflareProjectiles(){
+    if(!scoutflareProjectiles.length) return;
+    ctx.save();
+    ctx.fillStyle = '#ffd27f';
+    for(const proj of scoutflareProjectiles){
+      if(!proj) continue;
+      const px = Number.isFinite(proj.x) ? proj.x : Number(proj.currentX);
+      const py = Number.isFinite(proj.y) ? proj.y : Number(proj.currentY);
+      const pr = Math.max(3, Number(proj.radius) || 6);
+      if(!Number.isFinite(px) || !Number.isFinite(py)) continue;
+      ctx.beginPath();
+      ctx.arc(px, py, pr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   function castConvergingGaleAbility(slotIndex, ability){
@@ -35769,61 +33864,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     return hits;
   }
 
-  function drawScoutflareTelegraphs(){
-    if(!scoutflareBombCasts.length) return;
-    for(const cast of scoutflareBombCasts){
-      if(!cast) continue;
-      const targetX = Number.isFinite(cast.targetX) ? cast.targetX : cast.originX;
-      const targetY = Number.isFinite(cast.targetY) ? cast.targetY : cast.originY;
-      const radius = Math.max(0, Number(cast.impactRadius) || 0);
-      if(!(radius > 0)) continue;
-      if(!circleInCamera(targetX, targetY, radius + 40)) continue;
-      const progress = cast.distance > 0 ? Math.max(0, Math.min(1, (Number(cast.traveled) || 0) / cast.distance)) : 0;
-      ctx.save();
-      ctx.globalAlpha = 0.25 + 0.25 * progress;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([10, 8]);
-      ctx.strokeStyle = '#fdd47d';
-      ctx.beginPath();
-      ctx.arc(targetX, targetY, radius, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 0.16 + 0.3 * (1 - progress);
-      ctx.fillStyle = '#ffe8b3';
-      ctx.beginPath();
-      ctx.arc(targetX, targetY, Math.max(8, radius * 0.7), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-
-  function drawScoutflareProjectiles(){
-    if(!scoutflareBombCasts.length) return;
-    for(const cast of scoutflareBombCasts){
-      if(!cast || cast.state === 'windup') continue;
-      const px = Number.isFinite(cast.projectileX) ? cast.projectileX : cast.originX;
-      const py = Number.isFinite(cast.projectileY) ? cast.projectileY : cast.originY;
-      if(!circleInCamera(px, py, 20)) continue;
-      ctx.save();
-      ctx.globalAlpha = 0.95;
-      ctx.fillStyle = '#ffe680';
-      ctx.beginPath();
-      ctx.arc(px, py, 12, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = '#ffc057';
-      ctx.beginPath();
-      ctx.arc(px, py, 12, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 0.4;
-      ctx.fillStyle = '#fff0c6';
-      ctx.beginPath();
-      ctx.arc(px, py, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-
   function drawConvergingGaleEffects(){
     if(!convergingGaleBlasts.length && !convergingGaleTornadoes.length) return;
     ctx.save();
@@ -35860,129 +33900,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       ctx.fill();
     }
     ctx.restore();
-  }
-
-  function castHorizonRocketAbility(slotIndex, ability){
-    if(player.casting){
-      setHudMessage(`${player.casting.abilityName || 'Spell'} is already casting.`);
-      return false;
-    }
-
-    const abilityName = ability && (ability.shortName || ability.name)
-      ? (ability.shortName || ability.name)
-      : 'Horizon Breaker';
-    const castDuration = Math.max(0, Number(abilityFieldValue(ability, 'castTimeMs')) || 0) / 1000;
-    const projectileSpeed = Math.max(0, Number(abilityFieldValue(ability, 'projectileSpeedPxS')) || 0);
-    const outerRadius = Math.max(0, Number(abilityFieldValue(ability, 'outerRadiusPx')) || 0);
-    const innerRadiusRaw = Math.max(0, Number(abilityFieldValue(ability, 'innerRadiusPx')) || 0);
-    const innerRadius = outerRadius > 0 ? Math.min(innerRadiusRaw, outerRadius) : innerRadiusRaw;
-    const baseDamage = Math.max(0, Number(abilityFieldValue(ability, 'damage')) || 0);
-    const minPctRaw = Math.max(0, Math.min(100, Number(abilityFieldValue(ability, 'damageMinPct')) || 10));
-    const maxPctRaw = Math.max(minPctRaw, Math.min(200, Number(abilityFieldValue(ability, 'damageMaxPct')) || 100));
-    const minPct = minPctRaw / 100;
-    const maxPct = maxPctRaw / 100;
-    const secondaryPctRaw = Math.max(0, Math.min(100, Number(abilityFieldValue(ability, 'secondaryDamagePct')) || 80));
-    const secondaryFraction = secondaryPctRaw / 100;
-    const maxRange = Math.max(0, Number(abilityFieldValue(ability, 'maxRangePx')) || 0);
-
-    if(!(projectileSpeed > 0)){
-      setHudMessage(`${abilityName} needs travel speed configured.`);
-      return false;
-    }
-    if(!(outerRadius > 0)){
-      setHudMessage(`${abilityName} needs a blast radius.`);
-      return false;
-    }
-    if(!(baseDamage > 0)){
-      setHudMessage(`${abilityName} needs base damage.`);
-      return false;
-    }
-
-    const origin = getSpellOrigin(player);
-    const aimPoint = typeof skillshotAimPoint === 'function' ? skillshotAimPoint() : beamAimPoint();
-    let dx = aimPoint.x - origin.x;
-    let dy = aimPoint.y - origin.y;
-    let distance = Math.hypot(dx, dy);
-    if(!(distance > 0.0001)){
-      dx = player.target.x - origin.x;
-      dy = player.target.y - origin.y;
-      distance = Math.hypot(dx, dy);
-    }
-    if(!(distance > 0.0001)){
-      dx = 1;
-      dy = 0;
-      distance = 1;
-    }
-    if(maxRange > 0 && distance > maxRange){
-      const scale = maxRange / distance;
-      dx *= scale;
-      dy *= scale;
-      distance = maxRange;
-    }
-    let targetX = origin.x + dx;
-    let targetY = origin.y + dy;
-    if(mapState && Number.isFinite(mapState.width) && Number.isFinite(mapState.height)){
-      const clampRadius = Math.max(outerRadius, 0);
-      targetX = Math.max(clampRadius, Math.min(mapState.width - clampRadius, targetX));
-      targetY = Math.max(clampRadius, Math.min(mapState.height - clampRadius, targetY));
-      const adjDx = targetX - origin.x;
-      const adjDy = targetY - origin.y;
-      const adjDist = Math.hypot(adjDx, adjDy);
-      if(adjDist > 0.0001){
-        dx = adjDx;
-        dy = adjDy;
-        distance = adjDist;
-      }
-    }
-    const dirLen = Math.hypot(dx, dy) || 1;
-    const dirX = dx / dirLen;
-    const dirY = dy / dirLen;
-
-    const cast = {
-      slotIndex,
-      abilityId: ability.id,
-      abilityName,
-      casterRef: player,
-      originX: origin.x,
-      originY: origin.y,
-      targetX,
-      targetY,
-      dirX,
-      dirY,
-      distance,
-      projectileSpeed,
-      outerRadius,
-      innerRadius,
-      baseDamage,
-      minDamagePct: minPct,
-      maxDamagePct: maxPct,
-      secondaryFraction,
-      maxRange,
-      castDuration,
-      castElapsed: 0,
-      traveled: 0,
-      state: castDuration > 0 ? 'windup' : 'flying',
-      projectileX: origin.x,
-      projectileY: origin.y
-    };
-
-    horizonRocketCasts.push(cast);
-    player.casting = cast;
-    cancelPlayerAttack(false);
-    player.chaseTarget = null;
-    player.target.x = player.x;
-    player.target.y = player.y;
-    player.navGoal = null;
-    player.nav = null;
-
-    if(cast.state === 'windup'){
-      setHudMessage(`${abilityName} priming...`);
-    } else {
-      player.casting = null;
-      setHudMessage(`${abilityName} launched!`);
-    }
-
-    return true;
   }
 
   function castCelestialCrashAbility(slotIndex, ability){
@@ -44833,9 +42750,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     player.selectedTarget = target;
     player.attackTarget = null;
     player.attackWindup = 0;
-    const baseRange = Math.max(0, player.attackRange);
-    const weaponRange = resolveDualfireRangeBonus();
-    const range = Math.max(0, baseRange + weaponRange);
+    const range = Math.max(0, player.attackRange);
     const rangeSq = range * range;
     const inRange = range > 0 && playerTargetInRange(target, rangeSq);
     if(inRange){
@@ -45148,44 +43063,15 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   function applyPlayerAttackDamage(target){
     if(!target) return;
     enterPlayerCombat('attack');
-    const baseDamage = Math.max(0, Number(player.attackDamage) || 0);
-    const dualfireConfig = getDualfireConfig();
-    const isRocketForm = dualfireSwapState.form === 'rocket';
-    let damage = baseDamage;
-    if(isRocketForm){
-      const rocketPct = Math.max(0, Number(dualfireConfig.rocketDamagePct) || 100) / 100;
-      damage = damage * rocketPct;
-    }
-    const splashRadius = isRocketForm ? Math.max(0, Number(dualfireConfig.splashRadius) || 0) : 0;
+    const damage = Math.max(0, Number(player.attackDamage) || 0);
     flash(target.x, target.y);
     spawnPlayerProjectile(player.x, player.y, target);
-    const appliedDamage = applyPlayerAttackDamageToTarget(target, damage);
+    applyPlayerAttackDamageToTarget(target, damage);
     const currentHp = Math.max(0, Number(target.hp) || 0);
     tryDetonateEdgeFluxMark(target, { prevHp: currentHp, cause: 'attack' });
-    if(isRocketForm && appliedDamage > 0 && splashRadius > 0){
-      const splashSq = splashRadius * splashRadius;
-      for(const m of minions){
-        if(!m || m === target) continue;
-        if(!isEnemyMinionForPlayer(m)) continue;
-        if(m.hp <= 0 || m.portalizing > 0) continue;
-        const dx = m.x - target.x;
-        const dy = m.y - target.y;
-        if(dx * dx + dy * dy > splashSq) continue;
-        applyPlayerAttackDamageToTarget(m, damage);
-      }
-      if(isMonsterAttackable(monsterState) && monsterState !== target){
-        const dx = monsterState.x - target.x;
-        const dy = monsterState.y - target.y;
-        if(dx * dx + dy * dy <= splashSq){
-          applyPlayerAttackDamageToTarget(monsterState, damage);
-        }
-      }
-    }
-    if(dualfireSwapState.form === 'minigun' && appliedDamage > 0){
-      addDualfireStack(dualfireConfig.stackDuration, dualfireConfig.maxStacks);
-    }
     handlePhantomOverdriveAttackHit();
     handleRoyalOnslaughtAttackHit(target);
+    handleSpinningAxeAttackHit(target);
   }
 
   function handlePhantomOverdriveAttackHit(){
@@ -45246,6 +43132,60 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     player.attackWindup = 0;
     const attackPeriod = Math.max(0, Number(player.attackSpeedMs) || 0) / 1000;
     setPlayerAttackCooldownFromPeriod(attackPeriod);
+  }
+
+  function consumeSpinningAxeInHand(){
+    if(!spinningAxesInHand.length) return null;
+    return spinningAxesInHand.shift();
+  }
+
+  function addSpinningAxeInHand(config, { silent = false } = {}){
+    if(!config) return false;
+    const maxHeld = Math.max(1, Number(config.maxInHand) || 1);
+    if(spinningAxesInHand.length >= maxHeld){
+      return false;
+    }
+    const axe = {
+      abilityId: config.abilityId,
+      abilityName: config.abilityName || 'Spinning Axe',
+      bonusDamage: Math.max(0, Number(config.bonusDamage) || 0),
+      maxInHand: maxHeld,
+      flightTime: Math.max(0, Number(config.flightTime) || 0),
+      catchWindow: Math.max(0, Number(config.catchWindow) || 0),
+      catchRadius: Math.max(0, Number(config.catchRadius) || 0),
+      moveSpeedThreshold: Math.max(0, Number(config.moveSpeedThreshold) || 0),
+      forwardMin: Math.max(0, Number(config.forwardMin) || 0),
+      forwardMax: Math.max(0, Number(config.forwardMax) || 0),
+      stillMin: Math.max(0, Number(config.stillMin) || 0),
+      stillMax: Math.max(0, Number(config.stillMax) || 0),
+      sideJitterMax: Math.max(0, Number(config.sideJitterMax) || 0),
+      edgeMargin: Math.max(0, Number(config.edgeMargin) || 0),
+      slotIndex: Number.isFinite(config.slotIndex) ? config.slotIndex : null,
+      state: 'IN_HAND'
+    };
+    spinningAxesInHand.push(axe);
+    if(!silent){
+      setHudMessage(`${axe.abilityName || 'Spinning Axe'} caught! (${spinningAxesInHand.length}/${axe.maxInHand})`);
+    }
+    return true;
+  }
+
+  function handleSpinningAxeAttackHit(target){
+    const axe = consumeSpinningAxeInHand();
+    if(!axe) return;
+    if(target && axe.bonusDamage > 0){
+      applyPlayerAttackDamageToTarget(target, axe.bonusDamage);
+    }
+    const flight = {
+      ...axe,
+      state: 'IN_AIR',
+      originX: player.x,
+      originY: player.y,
+      velocityX: lastPlayerVelocityX,
+      velocityY: lastPlayerVelocityY,
+      remaining: axe.flightTime
+    };
+    spinningAxeFlights.push(flight);
   }
 
   function playerDrewTurretAggro(target){
@@ -45523,7 +43463,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       player.attackCooldown = 0;
       return;
     }
-    let totalMultiplier = resolveDualfireAttackSpeedMultiplier();
+    let totalMultiplier = 1;
     const bonusPct = bestActiveAttackSpeedBonusForCaster(player);
     if(bonusPct > 0){
       totalMultiplier *= 1 + bonusPct / 100;
@@ -45615,9 +43555,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       return;
     }
 
-    const baseRange = Math.max(0, player.attackRange);
-    const weaponRangeBonus = resolveDualfireRangeBonus();
-    const range = Math.max(0, baseRange + weaponRangeBonus);
+    const range = Math.max(0, player.attackRange);
     const baseWindupSeconds = Math.max(0, Number(player.attackWindupMs) || 0) / 1000;
     const windupReductionPct = bestPhantomOverdriveWindupReductionForCaster(player);
     const windupMultiplier = Math.max(0, 1 - windupReductionPct / 100);
@@ -49430,52 +47368,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     }
   }
 
-  function drawRunicPassages(){
-    for(const passage of runicPassages){
-      if(!passage) continue;
-      const startX = Number(passage.startX) || 0;
-      const startY = Number(passage.startY) || 0;
-      const endX = Number.isFinite(passage.endX) ? passage.endX : startX;
-      const endY = Number.isFinite(passage.endY) ? passage.endY : startY;
-      const width = Math.max(4, Number(passage.width) || 6);
-      const minX = Math.min(startX, endX) - width;
-      const maxX = Math.max(startX, endX) + width;
-      const minY = Math.min(startY, endY) - width;
-      const maxY = Math.max(startY, endY) + width;
-      if(!rectIntersectsCamera(minX, minY, maxX, maxY, 12)) continue;
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.shadowColor = '#9cf3ff';
-      ctx.shadowBlur = 16;
-      ctx.globalAlpha = 0.7;
-      ctx.lineWidth = width;
-      ctx.strokeStyle = '#8cf5ff';
-      ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.lineTo(endX, endY);
-      ctx.stroke();
-      ctx.lineWidth = Math.max(2, width * 0.35);
-      ctx.strokeStyle = '#e2fdff';
-      ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.lineTo(endX, endY);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.globalAlpha = 0.55;
-      ctx.lineWidth = 2;
-      const entryRadius = Math.max(0, Number(passage.entryRange) || 0);
-      if(entryRadius > 0){
-        ctx.beginPath();
-        ctx.arc(startX, startY, entryRadius * 0.6, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      ctx.beginPath();
-      ctx.arc(endX, endY, Math.max(6, width * 0.45), 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
-
   function drawSnapbackEchoes(){
     for(const echo of snapbackEchoes){
       if(!echo) continue;
@@ -49531,6 +47423,41 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       ctx.stroke();
       ctx.restore();
     }
+  }
+
+  function drawSpinningAxeMarkers(){
+    if(!spinningAxeMarkers.length) return;
+    ctx.save();
+    for(const marker of spinningAxeMarkers){
+      if(!marker) continue;
+      const radius = Math.max(0, Number(marker.catchRadius) || 0);
+      if(radius <= 0) continue;
+      if(!circleInCamera(marker.x, marker.y, radius + 12)) continue;
+      const windowDuration = Math.max(0.001, Number(marker.catchWindow) || 1);
+      const remaining = Math.max(0, Number(marker.remaining) || 0);
+      const progress = Math.max(0, Math.min(1, remaining / windowDuration));
+      const fillAlpha = 0.18 + 0.4 * progress;
+      const strokeAlpha = 0.5 + 0.4 * progress;
+      ctx.globalAlpha = fillAlpha;
+      ctx.fillStyle = '#ffd27f';
+      ctx.beginPath();
+      ctx.arc(marker.x, marker.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = strokeAlpha;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#ffb347';
+      ctx.beginPath();
+      ctx.arc(marker.x, marker.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.arc(marker.x, marker.y, Math.max(6, radius * 0.35), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
   }
 
   function drawChronoLoopGrenades(){
@@ -51362,7 +49289,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     updatePlayerBaseState(dt);
     updatePlayerRecall(dt);
     updateShopState(dt);
-    updateFlareguardHasteBuffs(dt);
     updateFrenziedSurgeAttackBuffs(dt);
     updateFrenziedSurgeMoveBuffs(dt);
     updateStrideSurgeAttackBuffs(dt);
@@ -51370,6 +49296,8 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     updatePhantomOverdriveAttackBuffs(dt);
     updatePhantomOverdriveMoveBuffs(dt);
     updateRoyalOnslaughtBuffs(dt);
+    updateSpinningAxeFlights(dt);
+    updateSpinningAxeMarkers(dt);
     updatePhantomOverdriveCasts(dt);
     updateShadowPursuitCasts(dt);
     updatePlayerShields(dt);
@@ -51391,7 +49319,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     const baseMovementMultiplier = castMovementMultiplier * statusMovementMultiplier;
     const shadowPursuitMult = Math.max(0, Number(playerRuntime.shadowPursuitMoveMult) || 1);
     const movementMultiplier = isPlayerMovementLocked ? 0 : baseMovementMultiplier
-      * Math.max(0, Number(flareguardMoveMultiplier) || 1)
       * Math.max(0, Number(frenziedSurgeMoveMultiplier) || 1)
       * Math.max(0, Number(phantomOverdriveMoveMultiplier) || 1)
       * Math.max(0, Number(strideSurgeMoveMultiplier) || 1)
@@ -52032,20 +49959,16 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     updateBedrockBurstCasts(dt);
     updateGroundbreakerCasts(dt);
     updateRagePulseCasts(dt);
-    updateBlazingFanCasts(dt);
     updateSlamCasts(dt);
     updateSlamFissures(dt);
     updateSlamIceFields(dt);
     updateSlamImpacts(dt);
     updateBeamCasts(dt);
     updateExpandingShotCasts(dt);
-    updateBeaconOfNightCasts(dt);
-    updateBeaconOfNightLocks(dt);
     updateShatterburstOrbCasts(dt);
     updateReboundOrbCasts(dt);
     updateCycloneCasts(dt);
     updateLaserConeCasts(dt);
-    updateBladeSweepCasts(dt);
     updateDuskwaveCasts(dt);
     updateSirensKissCasts(dt);
     updateShiverSpikeCasts(dt);
@@ -52054,7 +49977,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     updateBoneSkewerCasts(dt);
     updateGrabCasts(dt);
     updateBacklineSeizureCasts(dt);
-    updateBreakAndBraceCasts(dt);
     updateLinkLashCasts(dt);
     updateAstralSnareCasts(dt);
     updatePiercingArrowCasts(dt);
@@ -52077,7 +49999,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     updateConvergingGaleCasts(dt);
     updateConvergingGaleBlasts(dt);
     updateConvergingGaleTornadoes(dt);
-    updateHorizonRocketCasts(dt);
     updateTemporalVeilCasts(dt);
     updateMoonlitArcCasts(dt);
     updateCelestialCrashCasts(dt);
@@ -52091,9 +50012,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     updateHailboundTempests(dt);
     updateTranquilTorrentCasts(dt);
     updateSerenityFields(dt);
-    updateWeepingAuras(dt);
     updateQuiverstormBuffs(dt);
-    updateDualfireStacks(dt);
     updateScatterChargeCasts(dt);
     updateScatterCharges(dt);
     updateLinkLashTethers(dt);
@@ -52115,11 +50034,9 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     updateDawnfallBarrageCasts(dt);
     updateInfernoBarrageCasts(dt);
     updateBulletTimeCasts(dt);
-    updateRazorWhirlCasts(dt);
     updateEmberWaltzCasts(dt);
     updateEmberWaltzFlames(dt);
     updateSkyhookSwingCasts(dt);
-    updateRunicPassages(dt);
     updateSnapbackEchoes(dt);
     updateChronoLoopGrenades(dt);
     updateTwinstrikeCasts(dt);
@@ -52137,7 +50054,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     updateTrailblazePatches(dt);
     updateSandRushDashes(dt);
     updateSpiralRamRoll(dt);
-    updatePlasmaPursuitDashes(dt);
     updateGaleThrustStacks(dt);
     updateGaleThrustCasts(dt);
     updateLaserProjectiles(dt);
@@ -52187,7 +50103,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     drawScarecrowStormZones();
     drawScoutflareTelegraphs();
     drawConvergingGaleEffects();
-    drawHorizonRocketTelegraphs();
     drawTemporalVeilCasts();
     drawMoonlitArcCasts();
     drawCelestialCrashTelegraphs();
@@ -52200,7 +50115,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     drawHailboundTempests();
     drawSerenityFields();
     drawDriftingVeils();
-    drawWeepingAuras();
     drawVenomClouds();
     drawMiasmaClouds();
     drawStoneGazeEffects();
@@ -52209,10 +50123,10 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     drawGlacialUpliftWalls();
     drawSpectralStockades();
     drawScatterCharges();
+    drawSpinningAxeMarkers();
     drawSpringquakeFields();
     drawQuakingStrideAuras();
     drawSkyhookSwingCasts();
-    drawRunicPassages();
     drawSnapbackEchoes();
     drawChronoLoopGrenades();
     drawTwinstrikeTrails();
@@ -52382,8 +50296,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     drawTurretShots();
     drawSlamCasts();
     drawBeamCasts();
-    drawBeaconOfNightSpotlights();
-    drawBeaconOfNightLocks();
     drawLaserConeCasts();
     drawPiercingArrowCasts();
     drawGrabCasts();
@@ -52410,7 +50322,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     drawVerdictSalvoProjectiles();
     drawCullingBarrageProjectiles();
     drawScoutflareProjectiles();
-    drawHorizonRocketProjectiles();
 
     drawBoneSkewerChargePreviews();
     drawSlingshotCrashChargePreviews();
