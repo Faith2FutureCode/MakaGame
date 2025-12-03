@@ -302,6 +302,56 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
     const evenTeams = teams % 2 === 0 ? teams : teams + 1;
     const width = clampBaseValue(mapState.width, 5000);
     const height = clampBaseValue(mapState.height, 5000);
+    const baseRadius = Math.max(520, Math.min(width, height) * 0.18);
+    const fountainRadius = Math.max(220, Math.min(width, height) * 0.085);
+    const edgeGuard = baseRadius + 80; // keep bases comfortably inside the map bounds
+    const cornerInset = Math.max(edgeGuard, Math.min(width, height) * 0.18);
+    const insetX = Math.max(edgeGuard, Math.min(cornerInset, width - edgeGuard));
+    const insetY = Math.max(edgeGuard, Math.min(cornerInset, height - edgeGuard));
+    const buildBase = (index, x, y)=> {
+      const id = `team${index}`;
+      const base = {
+        id,
+        side: id,
+        color: multiTeamState.colors[index % multiTeamState.colors.length] || defaultTeamColors[index % defaultTeamColors.length],
+        baseZone: { x, y, radius: baseRadius },
+        fountain: { x, y, radius: fountainRadius },
+        nexus: { x, y, hp: 5000, maxHp: 5000 },
+        regenPerSecond: { hp: 180, mp: 120 },
+        regenInterval: 0.25,
+        invulnerabilityDuration: 1.5,
+        homeguardDuration: 4,
+        lethalRadius: fountainRadius + 180,
+        lethalDamagePerSecond: 6000
+      };
+      if(scoreState.mode === 'lastNexus'){
+        ensureNexusPosition(id, x, y);
+      }
+      return base;
+    };
+
+    // Special layouts: 2 teams = single diagonal, 4 teams = X (both diagonals).
+    if(evenTeams === 2){
+      const bases = [
+        buildBase(0, insetX, height - insetY),
+        buildBase(1, width - insetX, insetY)
+      ];
+      GameState.multiTeamBases = bases;
+      return bases;
+    }
+    if(evenTeams === 4){
+      const coords = [
+        { x: insetX, y: insetY }, // top-left
+        { x: width - insetX, y: insetY }, // top-right
+        { x: width - insetX, y: height - insetY }, // bottom-right
+        { x: insetX, y: height - insetY } // bottom-left
+      ];
+      const bases = coords.map((pos, idx)=> buildBase(idx, pos.x, pos.y));
+      GameState.multiTeamBases = bases;
+      return bases;
+    }
+
+    // Default layout: evenly spaced ring around center for 6+ teams.
     const cx = width / 2;
     const cy = height / 2;
     const radius = Math.min(width, height) * 0.38;
@@ -310,26 +360,7 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
       const angle = (Math.PI * 2 * i) / evenTeams - Math.PI / 2;
       const bx = cx + Math.cos(angle) * radius;
       const by = cy + Math.sin(angle) * radius;
-      const baseRadius = Math.max(520, Math.min(width, height) * 0.18);
-      const fountainRadius = Math.max(220, Math.min(width, height) * 0.085);
-      const id = `team${i}`;
-      bases.push({
-        id,
-        side: id,
-        color: multiTeamState.colors[i % multiTeamState.colors.length] || defaultTeamColors[i % defaultTeamColors.length],
-        baseZone: { x: bx, y: by, radius: baseRadius },
-        fountain: { x: bx, y: by, radius: fountainRadius },
-        nexus: { x: bx, y: by, hp: 5000, maxHp: 5000 },
-        regenPerSecond: { hp: 180, mp: 120 },
-        regenInterval: 0.25,
-        invulnerabilityDuration: 1.5,
-        homeguardDuration: 4,
-        lethalRadius: fountainRadius + 180,
-        lethalDamagePerSecond: 6000
-      });
-      if(scoreState.mode === 'lastNexus'){
-        ensureNexusPosition(id, bx, by);
-      }
+      bases.push(buildBase(i, bx, by));
     }
     GameState.multiTeamBases = bases;
     return bases;
@@ -5219,12 +5250,6 @@ import { initMobaSettingsMenu } from './genres/moba/settings.js';
   const playerStatusEmojiInputs = new Map();
   const playerStatusColorInputs = new Map();
   const playerStatusNodes = new Map();
-  // Ensure a live dummy is available on load so hits register immediately, after HUD/status nodes exist
-  setTimeout(() => {
-    if(practiceDummy && (practiceDummy.active === false || !(Number(practiceDummy.hp) > 0)) && !(practiceDummy.respawnTimer > 0)){
-      respawnPracticeDummy({ resetPosition: true, resetSize: true, resetStats: true });
-    }
-  }, 0);
   const prayerBindingButtons = new Map();
   const prayerActivateButtons = new Map();
   const prayerEmojiDisplays = new Map();
